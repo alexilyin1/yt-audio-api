@@ -37,6 +37,7 @@
   <input id="impfile" type="file" accept=".txt,.csv,text/plain,text/csv" style="margin-top:.5rem">
   <br><button id="imp" style="background:#1565c0">Find these songs</button>
   <div id="imphint" style="font-size:.85rem;color:#666;margin-top:.5rem" aria-live="polite"></div>
+  <div id="impzip" style="margin-top:.75rem"></div>
   <ol id="implist"></ol>
   <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
   <p id="quitrow" hidden style="font-size:.85rem"><a href="#" id="quit">Quit YT Audio</a></p>
@@ -69,11 +70,11 @@ async function runConversion(url, onUpdate) {
   }
 }
 
-function downloadLink(token) {
+function downloadLink(token, kind = 'MP3') {
   const a = document.createElement('a');
   a.className = 'dl';
   a.href = '/download?token=' + encodeURIComponent(token);
-  a.textContent = '⬇ Download MP3';
+  a.textContent = '⬇ Download ' + kind;
   return a;
 }
 
@@ -117,6 +118,57 @@ function songDownloader(youtubeUrl) {
   holder.appendChild(button);
   return holder;
 }
+// "Download all as ZIP" for a list of songs: converts them on the server and offers one zip file
+function zipButton(songs) {
+  const holder = document.createElement('div');
+  const button = document.createElement('button');
+  button.style.background = '#2e7d32';
+  button.textContent = '⬇ Download all ' + songs.length + ' as ZIP';
+  const note = document.createElement('div');
+  note.style.cssText = 'font-size:.85rem;color:#666;margin-top:.5rem';
+  const bar = document.createElement('progress');
+  bar.max = 100;
+  bar.hidden = true;
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    bar.hidden = false;
+    bar.value = 0;
+    note.textContent = 'Starting…';
+    try {
+      const res = await fetch('/zip/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songs: songs.map(s => ({ name: s.name, url: s.url })) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+      while (true) {
+        await new Promise(r => setTimeout(r, 1000));
+        const p = await (await fetch('/progress?job=' + encodeURIComponent(data.job))).json();
+        if (p.state === 'error') throw new Error(p.error || 'Something went wrong.');
+        if (p.state === 'done') {
+          holder.replaceChildren(downloadLink(p.token, 'ZIP'));
+          if (p.failed.length) {
+            const skipped = document.createElement('div');
+            skipped.style.cssText = 'font-size:.85rem;color:#b00020;margin-top:.5rem';
+            skipped.textContent = 'Could not download: ' + p.failed.join(', ');
+            holder.appendChild(skipped);
+          }
+          return;
+        }
+        bar.value = p.total ? p.done / p.total * 100 : 0;
+        note.textContent = p.state === 'zipping' ? 'Making the zip file…' : 'Converted ' + p.done + ' of ' + p.total + '…';
+      }
+    } catch (e) {
+      button.disabled = false;
+      bar.hidden = true;
+      note.textContent = e.message;
+    }
+  });
+  holder.append(button, document.createElement('br'), bar, note);
+  return holder;
+}
+
 // One list item: song name, YouTube link and Download MP3 button (or a note when no clean link was found)
 function songRow(song) {
   const li = document.createElement('li');
@@ -173,6 +225,7 @@ const imp = document.getElementById('imp');
 const impText = document.getElementById('imptext');
 const impHint = document.getElementById('imphint');
 const impList = document.getElementById('implist');
+const impZip = document.getElementById('impzip');
 
 document.getElementById('impfile').addEventListener('change', e => {
   const file = e.target.files[0];
@@ -184,6 +237,7 @@ document.getElementById('impfile').addEventListener('change', e => {
 
 imp.addEventListener('click', async () => {
   impList.innerHTML = '';
+  impZip.replaceChildren();
   if (!impText.value.trim()) { impHint.textContent = 'Paste some song names or choose a file first.'; return; }
   imp.disabled = true;
   impHint.textContent = 'Looking up songs… this can take a little while for long lists.';
@@ -197,6 +251,8 @@ imp.addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     impHint.textContent = 'Found ' + data.songs.length + ' song' + (data.songs.length === 1 ? '' : 's') + ':';
     data.songs.forEach(song => impList.appendChild(songRow(song)));
+    const downloadable = data.songs.filter(s => s.url);
+    if (downloadable.length > 1) impZip.appendChild(zipButton(downloadable));
   } catch (e) {
     impHint.textContent = e.message;
   } finally {
