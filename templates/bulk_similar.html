@@ -57,6 +57,14 @@ function fillSection(section, result) {
     section.appendChild(problemNote('notfound', result.error + ' (Your entry: "' + result.query + '")'));
     return;
   }
+  if (result.similar.length < 10) {
+    const few = document.createElement('div');
+    few.className = 'muted';
+    few.style.marginBottom = '.5rem';
+    few.textContent = 'Only ' + result.similar.length + ' close match' + (result.similar.length === 1 ? '' : 'es') +
+      ' found. We show fewer songs rather than add ones that don\'t fit.';
+    section.appendChild(few);
+  }
   const downloadable = result.similar.filter(s => s.url);
   if (downloadable.length > 1) section.appendChild(zipButton(downloadable, 'Download these ' + downloadable.length + ' as ZIP'));
   const list = document.createElement('ol');
