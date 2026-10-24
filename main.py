@@ -311,17 +311,37 @@ def similar():
         return jsonify(error=str(e)), INTERNAL_SERVER_ERROR
 
 
+def _parse_import(data: dict):
+    """Parses the posted text. Returns (usable entries, skipped entries, error response or None)."""
+    queries = song_import.parse_songs(str(data.get("text", "")))
+    usable, skipped = song_import.check_entries(queries)
+    if usable:
+        return usable, skipped, None
+    if skipped:
+        error = jsonify(error=f"None of these look like song names. {song_import.TIP}",
+                        skipped=[{"text": t, "reason": r} for t, r in skipped]), BAD_REQUEST
+    else:
+        error = jsonify(error=f"I couldn't find any song names in that. {song_import.TIP}"), BAD_REQUEST
+    return usable, skipped, error
+
+
+@app.route("/import/parse", methods=["POST"])
+def import_parse():
+    """Quick check of a pasted list, without looking up links: returns the usable entries."""
+    usable, skipped, error = _parse_import(request.get_json(silent=True) or {})
+    if error:
+        return error
+    return jsonify(queries=usable[:song_import.MAX_SONGS], found=len(usable), limit=song_import.MAX_SONGS,
+                   skipped=[{"text": t, "reason": r} for t, r in skipped], tip=song_import.TIP)
+
+
 @app.route("/import", methods=["POST"])
 def import_songs():
     """Parses pasted/uploaded song text and returns each song with a YouTube link (when found)."""
     data = request.get_json(silent=True) or {}
-    queries = song_import.parse_songs(str(data.get("text", "")))
-    usable, skipped = song_import.check_entries(queries)
-    if not usable:
-        if skipped:
-            return jsonify(error=f"None of these look like song names. {song_import.TIP}",
-                           skipped=[{"text": t, "reason": r} for t, r in skipped]), BAD_REQUEST
-        return jsonify(error=f"I couldn't find any song names in that. {song_import.TIP}"), BAD_REQUEST
+    usable, skipped, error = _parse_import(data)
+    if error:
+        return error
     songs = song_import.resolve_songs(usable[:song_import.MAX_SONGS])
     return jsonify(songs=songs, found=len(usable), limit=song_import.MAX_SONGS,
                    skipped=[{"text": t, "reason": r} for t, r in skipped], tip=song_import.TIP)
