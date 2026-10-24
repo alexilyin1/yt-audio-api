@@ -77,7 +77,7 @@ def _run_job(job_id: str, video_url: str) -> None:
         job.update(state="error", error=str(e))
 
 
-MAX_ZIP_SONGS = 100
+MAX_ZIP_SONGS = 1000  # 100 imported songs x 10 similar songs each
 ZIP_PARALLEL = 3  # songs converted at the same time
 BULK_SIMILAR_PARALLEL = 3  # imported songs looked up at the same time
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
@@ -93,43 +93,51 @@ def _safe_filename(name: str) -> str:
 
 
 def _run_zip_job(job_id: str, songs: list) -> None:
-    """Thread target: converts every song, then bundles the MP3s into one zip."""
+    """Thread target: converts every song straight into one zip, so only the zip uses disk space."""
     job = jobs[job_id]
-    converted = []  # (temp mp3 file name, name to use inside the zip)
+    zip_name = f"YT-Audio-songs-{uuid4().hex[:8]}.zip"
+    zip_path = Path(ABS_DOWNLOADS_PATH) / zip_name
+    lock = threading.Lock()  # zipfile isn't safe for several threads writing at once
+    used = set()
+    added = 0
 
-    def convert_one(song):
+    def add_to_zip(zf, filename: str, name: str) -> None:
+        nonlocal added
+        base, n = _safe_filename(name), 1
+        with lock:
+            arcname = base + ".mp3"
+            while arcname.lower() in used:  # two songs with the same name
+                n += 1
+                arcname = f"{base} ({n}).mp3"
+            used.add(arcname.lower())
+            zf.write(Path(ABS_DOWNLOADS_PATH) / filename, arcname)
+            added += 1
+
+    def convert_one(song, zf):
         filename = f"{uuid4()}.mp3"
         try:
             _convert(song["url"], filename)
-            converted.append((filename, _safe_filename(str(song.get("name") or "song")) + ".mp3"))
+            add_to_zip(zf, filename, str(song.get("name") or "song"))
         except Exception:
             job["failed"].append(str(song.get("name") or song["url"]))
+        finally:
+            (Path(ABS_DOWNLOADS_PATH) / filename).unlink(missing_ok=True)
         job["done"] += 1
 
-    zip_name = f"YT-Audio-songs-{uuid4().hex[:8]}.zip"
     try:
-        with ThreadPoolExecutor(max_workers=ZIP_PARALLEL) as pool:
-            list(pool.map(convert_one, songs))
-        if not converted:
+        os.makedirs(ABS_DOWNLOADS_PATH, exist_ok=True)
+        # ZIP_STORED: MP3s are already compressed
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+            with ThreadPoolExecutor(max_workers=ZIP_PARALLEL) as pool:
+                list(pool.map(lambda s: convert_one(s, zf), songs))
+        if not added:
             raise RuntimeError("None of the songs could be downloaded.")
-        job["state"] = "zipping"
-        used = set()
-        with zipfile.ZipFile(Path(ABS_DOWNLOADS_PATH) / zip_name, "w", zipfile.ZIP_STORED) as zf:  # MP3s are already compressed
-            for filename, arcname in sorted(converted, key=lambda c: c[1]):
-                base, n = arcname[:-4], 1
-                while arcname.lower() in used:  # two songs with the same name
-                    n += 1
-                    arcname = f"{base} ({n}).mp3"
-                used.add(arcname.lower())
-                zf.write(Path(ABS_DOWNLOADS_PATH) / filename, arcname)
         token = secrets.token_urlsafe(TOKEN_LENGTH)
         access_manager.add_token(token, zip_name)
         job.update(state="done", token=token)
     except Exception as e:
+        zip_path.unlink(missing_ok=True)
         job.update(state="error", error=str(e))
-    finally:
-        for filename, _ in converted:
-            (Path(ABS_DOWNLOADS_PATH) / filename).unlink(missing_ok=True)
 
 
 @app.route("/bulk-similar", methods=["GET"])
@@ -202,6 +210,7 @@ def start_zip():
     songs = [s for s in data.get("songs", []) if isinstance(s, dict) and _is_youtube_url(s.get("url"))]
     if not songs:
         return jsonify(error="No songs with a YouTube link to download."), BAD_REQUEST
+    songs = list({s["url"]: s for s in reversed(songs)}.values())[::-1]  # one copy per link
     songs = songs[:MAX_ZIP_SONGS]
     job_id = secrets.token_urlsafe(8)
     jobs[job_id] = {"state": "working", "done": 0, "total": len(songs), "failed": []}
