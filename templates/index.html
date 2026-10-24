@@ -31,6 +31,8 @@
   <textarea id="imptext" rows="5" style="width:100%;box-sizing:border-box;padding:.75rem;font-size:1rem;border:1px solid #bbb;border-radius:8px" placeholder="Bohemian Rhapsody&#10;Africa&#10;Take on Me"></textarea>
   <input id="impfile" type="file" accept=".txt,.csv,text/plain,text/csv" style="margin-top:.5rem">
   <br><button id="imp" style="background:#1565c0">Find these songs</button>
+  <button id="impsim" disabled style="background:#1db954;margin-left:.5rem">Find similar songs →</button>
+  <div id="impsimhint" style="font-size:.85rem;color:#666;margin-top:.5rem"></div>
   <div id="imphint" style="font-size:.85rem;color:#666;margin-top:.5rem" aria-live="polite"></div>
   <div id="impnotes"></div>
   <div id="impactions" style="margin-top:.75rem"></div>
@@ -77,6 +79,8 @@ const simList = document.getElementById('simlist');
 // Similar songs needs the Spotify keys; stay greyed out until they are saved
 fetch('/spotify/status').then(r => r.json()).then(d => {
   spotifyReady = d.configured;
+  document.getElementById('impsim').disabled = !d.configured;
+  document.getElementById('impsimhint').innerHTML = d.configured ? '' : 'To find similar songs, <a href="/spotify">set up Spotify first</a>.';
   sim.disabled = !d.configured;
   simHint.innerHTML = d.configured ? '' : 'To find similar songs, <a href="/spotify">set up Spotify first</a>.';
 }).catch(() => {});
@@ -109,7 +113,10 @@ function similarForListButton(queries) {
   button.textContent = '🎵 Find similar songs for these ' + queries.length;
   button.disabled = !spotifyReady;
   button.addEventListener('click', () => {
-    try { sessionStorage.setItem('bulkQueries', JSON.stringify(queries)); } catch (e) {}
+    try {
+      sessionStorage.setItem('bulkQueries', JSON.stringify(queries));
+      sessionStorage.removeItem('bulkInfo');
+    } catch (e) {}
     location.href = '/bulk-similar';
   });
   wrap.appendChild(button);
@@ -139,38 +146,11 @@ document.getElementById('impfile').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-// A notice box under the import: what went wrong with the list and how to fix it
+// Shows the notice box under the import
 function showImportNotes(headline, tip, skipped, severe) {
   impNotes.replaceChildren();
-  if (!headline && !skipped.length) return;
-  const box = document.createElement('div');
-  box.style.cssText = 'margin-top:.75rem;padding:.75rem 1rem;border-radius:8px;font-size:.9rem;' +
-    (severe ? 'background:#fdecea;border:1px solid #e57373' : 'background:#fff8e1;border:1px solid #ffd54f');
-  if (headline) {
-    const p = document.createElement('div');
-    p.style.fontWeight = '600';
-    p.textContent = headline;
-    box.appendChild(p);
-  }
-  if (tip) {
-    const t = document.createElement('div');
-    t.style.marginTop = '.35rem';
-    t.textContent = tip;
-    box.appendChild(t);
-  }
-  if (skipped.length) {
-    const list = document.createElement('ul');
-    list.style.margin = '.5rem 0 0';
-    skipped.forEach(s => {
-      const li = document.createElement('li');
-      const strong = document.createElement('b');
-      strong.textContent = '"' + s.text + '" ';
-      li.append(strong, s.reason);
-      list.appendChild(li);
-    });
-    box.appendChild(list);
-  }
-  impNotes.appendChild(box);
+  const box = noticeBox(headline, tip, skipped, severe);
+  if (box) impNotes.appendChild(box);
 }
 
 imp.addEventListener('click', async () => {
@@ -203,12 +183,7 @@ imp.addEventListener('click', async () => {
 
     songs.forEach(song => {
       const li = songRow(song);
-      if (song.hint) {
-        const note = document.createElement('div');
-        note.style.cssText = 'font-size:.85rem;margin-top:.2rem;color:' + (song.status === 'notfound' ? '#b00020' : '#8a6d00');
-        note.textContent = (song.status === 'notfound' ? '✗ You entered "' + song.query + '". ' : '⚠ ') + song.hint;
-        li.appendChild(note);
-      }
+      if (song.hint) li.appendChild(problemNote(song.status, (song.status === 'notfound' ? 'You entered "' + song.query + '". ' : '') + song.hint));
       impList.appendChild(li);
     });
 
@@ -218,7 +193,7 @@ imp.addEventListener('click', async () => {
       const severe = bad * 2 >= total;
       const headline = severe
         ? 'Most of your list couldn\'t be matched (' + bad + ' of ' + total + ' entries). Please check it and try again.'
-        : problems + ' of ' + total + ' entries need a look' + (unsure.length ? ' (a ⚠ means we guessed).' : '.');
+        : problems + ' of ' + total + ' entries need a look' + (unsure.length ? ' ("Check this match" means we guessed).' : '.');
       showImportNotes(headline, data.tip, skipped, severe);
     }
 
@@ -230,6 +205,36 @@ imp.addEventListener('click', async () => {
     impHint.textContent = e.message;
   } finally {
     imp.disabled = false;
+  }
+});
+
+// "Find similar songs →": skip the download links and go straight to the similar songs page
+const impSim = document.getElementById('impsim');
+impSim.addEventListener('click', async () => {
+  impNotes.replaceChildren();
+  if (!impText.value.trim()) { impHint.textContent = 'Paste some song names or choose a file first.'; return; }
+  impSim.disabled = true;
+  try {
+    const res = await fetch('/import/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: impText.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      impHint.textContent = '';
+      showImportNotes(data.error || 'Something went wrong.', '', data.skipped || [], true);
+      impSim.disabled = false;
+      return;
+    }
+    try {
+      sessionStorage.setItem('bulkQueries', JSON.stringify(data.queries));
+      sessionStorage.setItem('bulkInfo', JSON.stringify({ found: data.found, limit: data.limit, skipped: data.skipped, tip: data.tip }));
+    } catch (e) {}
+    location.href = '/bulk-similar';
+  } catch (e) {
+    impHint.textContent = e.message;
+    impSim.disabled = false;
   }
 });
 

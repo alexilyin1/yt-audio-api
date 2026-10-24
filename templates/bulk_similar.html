@@ -52,17 +52,9 @@ function fillSection(section, result) {
   const h = document.createElement('h2');
   h.textContent = result.error ? result.query : 'Songs like ' + result.song;
   section.appendChild(h);
-  if (result.note) {
-    const note = document.createElement('div');
-    note.style.cssText = 'font-size:.85rem;color:#8a6d00;margin-bottom:.5rem';
-    note.textContent = '⚠ ' + result.note + ' (Your entry: "' + result.query + '")';
-    section.appendChild(note);
-  }
+  if (result.note) section.appendChild(problemNote('unsure', result.note + ' (Your entry: "' + result.query + '")'));
   if (result.error) {
-    const e = document.createElement('div');
-    e.className = 'error';
-    e.textContent = result.error;
-    section.appendChild(e);
+    section.appendChild(problemNote('notfound', result.error + ' (Your entry: "' + result.query + '")'));
     return;
   }
   const downloadable = result.similar.filter(s => s.url);
@@ -123,7 +115,18 @@ async function run(queries) {
 }
 
 let queries = [];
-try { queries = JSON.parse(sessionStorage.getItem('bulkQueries') || '[]'); } catch (e) {}
+let info = null;  // what the import step ignored or cut off, when it started this page directly
+try {
+  queries = JSON.parse(sessionStorage.getItem('bulkQueries') || '[]');
+  info = JSON.parse(sessionStorage.getItem('bulkInfo') || 'null');
+} catch (e) {}
+if (info) {
+  const skipped = info.skipped || [];
+  const cut = info.found > info.limit ? 'Your list has ' + info.found + ' songs; using the first ' + info.limit + '.' : '';
+  const ignored = skipped.length ? skipped.length + ' line' + (skipped.length === 1 ? ' was' : 's were') + ' ignored because ' + (skipped.length === 1 ? 'it isn\'t' : 'they aren\'t') + ' song names.' : '';
+  const box = noticeBox([cut, ignored].filter(Boolean).join(' '), skipped.length ? info.tip : '', skipped, false);
+  if (box) document.getElementById('top').after(box);
+}
 if (!queries.length) {
   fail('There are no songs to look up. Go back, import a list of songs, and click "Find similar songs for these".');
 } else {

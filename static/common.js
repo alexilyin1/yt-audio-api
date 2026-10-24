@@ -132,3 +132,47 @@ function uniqueSongs(songs) {
     return true;
   });
 }
+
+// A notice box: bold headline, a tip, and a list of {text, reason} entries. Returns null if there is nothing to say.
+function noticeBox(headline, tip, skipped, severe) {
+  if (!headline && !skipped.length) return null;
+  const box = document.createElement('div');
+  box.style.cssText = 'margin:.75rem 0;padding:.75rem 1rem;border-radius:8px;font-size:.9rem;' +
+    (severe ? 'background:#fdecea;border:1px solid #e57373' : 'background:#fff8e1;border:1px solid #ffd54f');
+  if (headline) {
+    const p = document.createElement('div');
+    p.style.fontWeight = '600';
+    p.textContent = headline;
+    box.appendChild(p);
+  }
+  if (tip) {
+    const t = document.createElement('div');
+    t.style.marginTop = '.35rem';
+    t.textContent = tip;
+    box.appendChild(t);
+  }
+  if (skipped.length) {
+    const list = document.createElement('ul');
+    list.style.margin = '.5rem 0 0';
+    skipped.forEach(s => {
+      const li = document.createElement('li');
+      const strong = document.createElement('b');
+      strong.textContent = '"' + s.text + '" ';
+      li.append(strong, s.reason);
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+  }
+  return box;
+}
+
+// A labelled note under a song: "Check this match: ..." (amber) or "Not found: ..." (red). Plain text, no symbols.
+function problemNote(kind, text) {
+  const note = document.createElement('div');
+  const color = kind === 'notfound' ? '#b00020' : '#8a6d00';
+  note.style.cssText = 'font-size:.85rem;margin-top:.25rem;padding-left:.6rem;border-left:3px solid ' + color + ';color:' + color;
+  const label = document.createElement('b');
+  label.textContent = (kind === 'notfound' ? 'Not found: ' : 'Check this match: ');
+  note.append(label, text);
+  return note;
+}
