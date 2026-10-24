@@ -30,6 +30,14 @@
   <div id="simhint" style="font-size:.85rem;color:#666;margin-top:.5rem"></div>
   <ol id="simlist"></ol>
   <div id="status" aria-live="polite"></div>
+  <hr style="margin:2rem 0;border:0;border-top:1px solid #ddd">
+  <h2 style="font-size:1.15rem">Import a list of songs</h2>
+  <p style="font-size:.9rem;color:#555">Paste song names (one per line, or separated by commas, tabs, semicolons) or choose a .txt / .csv file.</p>
+  <textarea id="imptext" rows="5" style="width:100%;box-sizing:border-box;padding:.75rem;font-size:1rem;border:1px solid #bbb;border-radius:8px" placeholder="Bohemian Rhapsody&#10;Africa&#10;Take on Me"></textarea>
+  <input id="impfile" type="file" accept=".txt,.csv,text/plain,text/csv" style="margin-top:.5rem">
+  <br><button id="imp" style="background:#1565c0">Find these songs</button>
+  <div id="imphint" style="font-size:.85rem;color:#666;margin-top:.5rem" aria-live="polite"></div>
+  <ol id="implist"></ol>
   <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
 </main>
 <script>
@@ -108,6 +116,28 @@ function songDownloader(youtubeUrl) {
   holder.appendChild(button);
   return holder;
 }
+// One list item: song name, YouTube link and Download MP3 button (or a note when no clean link was found)
+function songRow(song) {
+  const li = document.createElement('li');
+  li.textContent = song.name + ' ';
+  if (song.url) {
+    const a = document.createElement('a');
+    a.href = song.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = '▶ YouTube';
+    li.appendChild(a);
+    li.appendChild(document.createTextNode(' '));
+    li.appendChild(songDownloader(song.url));
+  } else {
+    const none = document.createElement('span');
+    none.style.color = '#888';
+    none.textContent = '(no clean audio found)';
+    li.appendChild(none);
+  }
+  return li;
+}
+
 const sim = document.getElementById('sim');
 const simHint = document.getElementById('simhint');
 const simList = document.getElementById('simlist');
@@ -129,30 +159,47 @@ sim.addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     simHint.textContent = 'Songs like ' + data.song + ':';
-    data.similar.forEach(song => {
-      const li = document.createElement('li');
-      li.textContent = song.name + ' ';
-      if (song.url) {
-        const a = document.createElement('a');
-        a.href = song.url;
-        a.target = '_blank';
-        a.rel = 'noopener';
-        a.textContent = '▶ YouTube';
-        li.appendChild(a);
-        li.appendChild(document.createTextNode(' '));
-        li.appendChild(songDownloader(song.url));
-      } else {
-        const none = document.createElement('span');
-        none.style.color = '#888';
-        none.textContent = '(no clean audio found)';
-        li.appendChild(none);
-      }
-      simList.appendChild(li);
-    });
+    data.similar.forEach(song => simList.appendChild(songRow(song)));
   } catch (e) {
     simHint.textContent = e.message;
   } finally {
     sim.disabled = false;
+  }
+});
+
+// Import: a chosen file fills the text box, then "Find these songs" looks up each one
+const imp = document.getElementById('imp');
+const impText = document.getElementById('imptext');
+const impHint = document.getElementById('imphint');
+const impList = document.getElementById('implist');
+
+document.getElementById('impfile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { impText.value = reader.result; };
+  reader.readAsText(file);
+});
+
+imp.addEventListener('click', async () => {
+  impList.innerHTML = '';
+  if (!impText.value.trim()) { impHint.textContent = 'Paste some song names or choose a file first.'; return; }
+  imp.disabled = true;
+  impHint.textContent = 'Looking up songs… this can take a little while for long lists.';
+  try {
+    const res = await fetch('/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: impText.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    impHint.textContent = 'Found ' + data.songs.length + ' song' + (data.songs.length === 1 ? '' : 's') + ':';
+    data.songs.forEach(song => impList.appendChild(songRow(song)));
+  } catch (e) {
+    impHint.textContent = e.message;
+  } finally {
+    imp.disabled = false;
   }
 });
 

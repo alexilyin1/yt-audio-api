@@ -15,6 +15,7 @@ import imageio_ffmpeg
 import access_manager
 import spotify_config
 import similar_songs
+import song_import
 from constants import *
 
 # Initialize the Flask application
@@ -159,6 +160,16 @@ def similar():
         return jsonify(similar_songs.find_similar(video_url))
     except similar_songs.SimilarSongsError as e:
         return jsonify(error=str(e)), INTERNAL_SERVER_ERROR
+
+
+@app.route("/import", methods=["POST"])
+def import_songs():
+    """Parses pasted/uploaded song text and returns each song with a YouTube link (when found)."""
+    data = request.get_json(silent=True) or {}
+    queries = song_import.parse_songs(str(data.get("text", "")))
+    if not queries:
+        return jsonify(error="I couldn't find any song names in that."), BAD_REQUEST
+    return jsonify(songs=song_import.resolve_songs(queries))
 
 
 @app.route("/download", methods=["GET"])
