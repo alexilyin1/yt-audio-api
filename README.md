@@ -8,15 +8,16 @@ A high-performance Flask API that transforms any public YouTube video into a hig
 
 ## 📚 Table of Contents
 1. [Features](#-features)
-2. [Installation](#-installation)
-3. [Example Usage](#-example-usage)
-4. [API Endpoints](#-api-endpoints)
-5. [Internals (How It Works)](#️-internals-how-it-works)
-6. [Tech Stack](#-tech-stack)
-7. [Ideal For](#-ideal-for)
-8. [Author](#-author)
-9. [Weekly Rewind](#-weekly-rewind-tech-ai--entrepreneurship)
-10. [License](#-license)
+2. [Getting Started (Mac app)](#️-getting-started-mac-app-no-technical-knowledge-needed)
+3. [Installation](#-installation)
+4. [Example Usage](#-example-usage)
+5. [API Endpoints](#-api-endpoints)
+6. [Internals (How It Works)](#️-internals-how-it-works)
+7. [Tech Stack](#-tech-stack)
+8. [Ideal For](#-ideal-for)
+9. [Author](#-author)
+10. [Weekly Rewind](#-weekly-rewind-tech-ai--entrepreneurship)
+11. [License](#-license)
 
 ---
 
@@ -28,6 +29,46 @@ A high-performance Flask API that transforms any public YouTube video into a hig
 - ⏱️ Tokens expire automatically (default: 5 mins)
 - 🧹 Expired files are auto-deleted (clean disk usage)
 - 🚀 Built for fast local or cloud deployment
+
+---
+
+## 🖥️ Getting Started (Mac app, no technical knowledge needed)
+
+### 1. Install the app
+1. Open the [Releases page](../../releases) and download the **Latest build** zip for your Mac:
+   - **apple-silicon**: any Mac from late 2020 or newer (M1, M2, M3, M4...)
+   - **intel**: older Macs. Not sure? Click the Apple menu → *About This Mac*; "Chip: Apple M…" means apple-silicon.
+2. Double-click the zip to unzip it, then drag **YT Audio** into your **Applications** folder.
+3. Open **YT Audio**. The first time, macOS will refuse because the app isn't signed by Apple. This is expected and only needed once:
+   - **macOS 15 (Sequoia) or newer:** click *Done*, open **System Settings → Privacy & Security**, scroll down to the message about "YT Audio" and click **Open Anyway**, then confirm with your password.
+   - **Older macOS:** right-click (or Control-click) the app, choose **Open**, then **Open** again.
+4. Your web browser opens on the app's page (it runs only on your own computer). Paste a YouTube link and click **Convert to MP3**; the file goes to your usual Downloads folder.
+5. When you're finished, click **Quit YT Audio** at the bottom of the page. Closing the browser tab doesn't stop the app.
+
+The app is rebuilt every Monday so it keeps working when YouTube changes things. If downloads suddenly stop working, download the newest zip from the Releases page.
+
+### 2. Optional: Spotify song suggestions
+"Find similar songs" needs a free Spotify key. It takes about 3 minutes and only has to be done once. The app walks you through this on its **Set up Spotify** page; here are the same steps:
+
+1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) and log in with your normal Spotify account (a free account works). Accept the terms if asked.
+2. Click **Create app** and fill in:
+   - **App name** and **App description**: anything, e.g. `My Music Helper` / `Personal use`
+   - **Redirect URI:** `http://127.0.0.1:5000/callback`, then click **Add**
+   - **Which API/SDKs:** tick **Web API**
+3. Tick the terms box and click **Save**.
+4. On your app's page, click **Settings**. Your **Client ID** is shown there; click **View client secret** to reveal the **Client secret**.
+5. In YT Audio, click **Set up Spotify song recommendations**, paste both values and click **Check and save**. The app tests the keys with Spotify first and tells you if something was mistyped.
+
+Your keys are stored only on your computer, in `~/Library/Application Support/YT Audio/.env` (readable only by you), and are never shown again. To change them, repeat step 5. The **Find similar songs** button stays greyed out until keys are saved.
+
+> **Note:** Spotify no longer offers its own "recommendations" feature to new apps, so the suggestions come from songs that appear in the same playlists as your song (plus other songs by the same artist). Results are good but not perfect.
+
+### 3. Importing a list of songs
+Use **Import a list of songs** on the main page. Paste names (one per line, or separated by commas, tabs or semicolons) or choose a `.txt`/`.csv` file. CSV exports with *Track Name* and *Artist* columns work too. Each song gets a YouTube link and a **Download MP3** button.
+
+### For developers
+- Run from source: `pip install -r requirements.txt` then `python main.py` and open <http://localhost:5000>.
+- Build the Mac app: push a tag (`git tag v1.0.0 && git push origin v1.0.0`) to publish a versioned release, or run the *Build Mac app* workflow by hand. A weekly job replaces the **Latest build** release. To build locally on a Mac: `pip install -r requirements.txt -r requirements-build.txt`, then the `pyinstaller` command in `.github/workflows/build-mac.yml`.
 
 ---
 
@@ -60,7 +101,7 @@ python3 main.py
 ## 📗 Example Usage
 ### Step 1: Request Token
 ```
-GET /?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ
+GET /convert?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 Response:
 ```json
@@ -78,8 +119,17 @@ Result: `yourfile.mp3` will download automatically 🎶
 ---
 
 ## 🔄 API Endpoints
-| Method | Route         | Description                                  |
-|--------|---------------|----------------------------------------------|
+| Method | Route                | Description                                                        |
+|--------|----------------------|--------------------------------------------------------------------|
+| GET    | `/`                  | The web page (paste a link, similar songs, import a list)          |
+| GET    | `/convert`           | Accepts `?url=<video_url>`, converts and returns a token           |
+| GET    | `/start`, `/progress`| Same conversion in the background: `/start?url=` returns a job id, `/progress?job=` its percent and token |
+| GET    | `/download`          | Accepts `?token=<token>`, returns the audio file                   |
+| GET    | `/similar`           | Accepts `?url=<video_url>`, returns 10 related songs with YouTube links |
+| POST   | `/import`            | JSON `{"text": "..."}`; returns each parsed song with a YouTube link |
+| GET/POST | `/spotify`, `/spotify/status`, `/spotify/save` | Spotify key setup page and checks |
+
+--------|---------------|----------------------------------------------|
 | GET    | `/`           | Accepts `?url=<video_url>`, returns token    |
 | GET    | `/download`   | Accepts `?token=<token>`, returns audio file |
 
@@ -153,17 +203,3 @@ A behind-the-scenes look at real-world experiences, global insights, and hands-o
 
 ## 📆 License
 MIT License — free for personal and commercial use.
-
----
-
-## 🖥️ Mac app (for non-technical users)
-
-Download the zip for your Mac from the [Releases page](../../releases) (**apple-silicon** for M1 and newer, **intel** for older Macs), unzip it and double-click **YT Audio**. Your browser opens with the page; nothing else needs installing.
-
-The app isn't signed with an Apple Developer account, so the first time macOS will say it can't be opened. **Right-click the app, choose Open, then Open again.** This is only needed once.
-
-Your Spotify keys are saved in `~/Library/Application Support/YT Audio`. Use the **Quit YT Audio** link at the bottom of the page to stop the app.
-
-**Always up to date:** a *Build Mac app* job rebuilds the app every Monday with the newest downloader and replaces the **Latest build** release, so the same download link keeps working when YouTube changes.
-
-**Building it:** push a tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) and the *Build Mac app* workflow publishes a release with both zips. To build by hand on a Mac: `pip install -r requirements.txt -r requirements-build.txt` then the `pyinstaller` command in `.github/workflows/build-mac.yml`.
