@@ -117,3 +117,18 @@ function songRow(song) {
   }
   return li;
 }
+
+// Removes repeats from a list of {name, url} songs: the same video, or the same song title and artist
+// (versions like "- Radio Edit" or "(feat. X)" count as the same song). Keeps the first of each.
+function uniqueSongs(songs) {
+  const seen = new Set();
+  return songs.filter(song => {
+    const [title, artist = ''] = song.name.replace(/[\u2018\u2019]/g, "'").split(' \u2014 ');
+    const base = title.split(/\s+-\s+|\s*[(\[]/)[0].trim().toLowerCase();
+    const video = (song.url.match(/[?&]v=([^&]+)/) || [])[1] || song.url;
+    const keys = ['v:' + video, 's:' + base + '|' + artist.trim().toLowerCase()];
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  });
+}

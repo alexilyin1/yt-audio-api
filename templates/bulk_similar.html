@@ -14,6 +14,7 @@
   section ol { padding-left: 1.5rem; }
   li { margin-bottom: .55rem; }
   .muted { color: #666; font-size: .9rem; }
+  #master { border: 2px solid #2e7d32; }
   #top { position: sticky; top: 0; background: #f4f4f7; padding: .5rem 0 .75rem; z-index: 1; }
   section button { margin-top: .25rem; }
 </style>
@@ -26,6 +27,7 @@
     <div id="summary" class="muted" aria-live="polite">Starting…</div>
     <progress id="bar" max="100" value="0"></progress>
   </div>
+  <section id="master" hidden></section>
   <div id="groups"></div>
 </main>
 <script src="/static/common.js"></script>
@@ -33,7 +35,9 @@
 const summary = document.getElementById('summary');
 const bar = document.getElementById('bar');
 const groups = document.getElementById('groups');
-const sections = [];  // one placeholder <section> per imported song, in the order they were entered
+const master = document.getElementById('master');
+const sections = [];
+const resultsByIndex = {};  // index -> that song's similar songs  // one placeholder <section> per imported song, in the order they were entered
 
 function fail(msg) {
   bar.hidden = true;
@@ -43,6 +47,7 @@ function fail(msg) {
 
 // Fills a song's section with its related songs, a ZIP button for the group, or an error
 function fillSection(section, result) {
+  resultsByIndex[result.index] = result.similar || [];
   section.replaceChildren();
   const h = document.createElement('h2');
   h.textContent = result.error ? result.query : 'Songs like ' + result.song;
@@ -59,6 +64,26 @@ function fillSection(section, result) {
   const list = document.createElement('ol');
   result.similar.forEach(song => list.appendChild(songRow(song)));
   section.appendChild(list);
+}
+
+// One ZIP with every song from every group, repeats removed
+function showMasterZip() {
+  const everything = [];
+  sections.forEach((_, i) => everything.push(...(resultsByIndex[i] || [])));
+  const songs = uniqueSongs(everything.filter(s => s.url));
+  if (!songs.length) return;
+  const removed = everything.filter(s => s.url).length - songs.length;
+  master.hidden = false;
+  master.replaceChildren();
+  const h = document.createElement('h2');
+  h.textContent = 'Everything in one ZIP';
+  const info = document.createElement('div');
+  info.className = 'muted';
+  info.style.marginBottom = '.5rem';
+  const minutes = Math.max(1, Math.round(songs.length * 12 / 3 / 60));
+  info.textContent = songs.length + ' unique songs' + (removed ? ' (' + removed + ' repeats removed)' : '') +
+    '. Converting them all takes about ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + '; keep this page open.';
+  master.append(h, info, zipButton(songs, '⬇ Download all ' + songs.length + ' songs as ZIP'));
 }
 
 async function run(queries) {
@@ -86,7 +111,7 @@ async function run(queries) {
     summary.textContent = p.state === 'done'
       ? 'Done: similar songs found for ' + p.total + ' song' + (p.total === 1 ? '' : 's') + '.'
       : 'Finished ' + p.done + ' of ' + p.total + '. Results appear below as they are ready; this can take a few minutes for long lists.';
-    if (p.state === 'done') { bar.hidden = true; return; }
+    if (p.state === 'done') { bar.hidden = true; showMasterZip(); return; }
     await new Promise(r => setTimeout(r, 1500));
   }
 }
