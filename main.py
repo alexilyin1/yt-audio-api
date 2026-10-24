@@ -13,6 +13,7 @@ from pathlib import Path
 import yt_dlp
 import imageio_ffmpeg
 import access_manager
+import spotify_config
 from constants import *
 
 # Initialize the Flask application
@@ -118,6 +119,33 @@ def handle_audio_request():
         return jsonify(error="Failed to download or convert audio.", detail=str(e)), INTERNAL_SERVER_ERROR
 
     return _generate_token_response(filename)
+
+
+@app.route("/spotify", methods=["GET"])
+def spotify_setup_page():
+    """Guided setup page for the Spotify API keys."""
+    return render_template("spotify.html")
+
+
+@app.route("/spotify/status", methods=["GET"])
+def spotify_status():
+    """Tells the GUI whether keys are already saved (never returns the keys)."""
+    return jsonify(configured=spotify_config.is_configured())
+
+
+@app.route("/spotify/save", methods=["POST"])
+def spotify_save():
+    """Validates a Client ID/secret with Spotify and, if they work, saves them to .env."""
+    data = request.get_json(silent=True) or {}
+    client_id = str(data.get("client_id", "")).strip()
+    client_secret = str(data.get("client_secret", "")).strip()
+    if not client_id or not client_secret:
+        return jsonify(error="Please fill in both the Client ID and the Client secret."), BAD_REQUEST
+    problem = spotify_config.check_credentials(client_id, client_secret)
+    if problem:
+        return jsonify(error=problem), BAD_REQUEST
+    spotify_config.save_credentials(client_id, client_secret)
+    return jsonify(ok=True)
 
 
 @app.route("/download", methods=["GET"])
