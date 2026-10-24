@@ -158,11 +158,13 @@ def _run_bulk_similar(job_id: str, queries: list) -> None:
     def one(index_query):
         index, query = index_query
         try:
-            seed = similar_songs.seed_from_queries(token, [query])
-            if not song_import._looks_related(query, seed):  # Spotify returns something even for nonsense
-                raise similar_songs.SimilarSongsError(f"Couldn't find \"{query}\" on Spotify.")
+            seed, status, hint = song_import.best_match(token, query)
+            if not seed:
+                raise similar_songs.SimilarSongsError(f"{hint} {song_import.TIP}")
             result = similar_songs.similar_for_seed(token, seed)
             entry = {"index": index, "query": query, **result}
+            if status == "unsure":
+                entry["note"] = hint
         except similar_songs.SimilarSongsError as e:
             entry = {"index": index, "query": query, "error": str(e)}
         except Exception:
@@ -314,11 +316,15 @@ def import_songs():
     """Parses pasted/uploaded song text and returns each song with a YouTube link (when found)."""
     data = request.get_json(silent=True) or {}
     queries = song_import.parse_songs(str(data.get("text", "")))
-    if not queries:
-        return jsonify(error="I couldn't find any song names in that."), BAD_REQUEST
-    found = len(queries)
-    songs = song_import.resolve_songs(queries[:song_import.MAX_SONGS])
-    return jsonify(songs=songs, found=found, limit=song_import.MAX_SONGS)
+    usable, skipped = song_import.check_entries(queries)
+    if not usable:
+        if skipped:
+            return jsonify(error=f"None of these look like song names. {song_import.TIP}",
+                           skipped=[{"text": t, "reason": r} for t, r in skipped]), BAD_REQUEST
+        return jsonify(error=f"I couldn't find any song names in that. {song_import.TIP}"), BAD_REQUEST
+    songs = song_import.resolve_songs(usable[:song_import.MAX_SONGS])
+    return jsonify(songs=songs, found=len(usable), limit=song_import.MAX_SONGS,
+                   skipped=[{"text": t, "reason": r} for t, r in skipped], tip=song_import.TIP)
 
 
 @app.route("/download", methods=["GET"])

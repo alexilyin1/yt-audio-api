@@ -10,6 +10,7 @@ Spaces are never treated as separators, because they are part of song names.
 import csv
 import io
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 import similar_songs
 import spotify_config
@@ -80,28 +81,77 @@ def parse_songs(text: str) -> list[str]:
     return songs
 
 
-def _looks_related(query: str, track: dict) -> bool:
-    """Spotify always returns something; only trust a result sharing a word with what was asked for."""
-    words = {w for w in re.findall(r"\w+", query.lower()) if len(w) > 2}
-    found = set(re.findall(r"\w+", (track["name"] + " " + track["artists"][0]["name"]).lower()))
-    return not words or bool(words & found)
+# Words too common to prove a match
+_STOPWORDS = {"the", "and", "feat", "ft", "with", "live", "remix", "official", "video", "audio", "version", "remaster", "remastered"}
+OK_CONFIDENCE = 0.75      # most of what the user typed appears in the Spotify match
+UNSURE_CONFIDENCE = 0.4   # below this the match is probably a different song
+MAX_ENTRY_LENGTH = 100    # longer lines are probably sentences or lyrics, not song names
+TIP = "For best results, enter one song per line as \"Artist - Song\" (for example: Daft Punk - One More Time)."
+
+
+def _words(text: str) -> set:
+    """Lower-case words of a text, accents removed, without filler words."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return {w for w in re.findall(r"\w+", text) if len(w) > 1 and w not in _STOPWORDS}
+
+
+def match_confidence(query: str, track: dict) -> float:
+    """0..1: how much of what the user typed shows up in a Spotify track's title and artists."""
+    wanted = _words(query)
+    if not wanted:
+        return 0.5
+    found = _words(track["name"] + " " + " ".join(a["name"] for a in track["artists"]))
+    return len(wanted & found) / len(wanted)
+
+
+def best_match(token: str, query: str) -> tuple:
+    """Returns (track or None, status, hint). Status is "ok", "unsure" (a guess) or "notfound"."""
+    try:
+        items = similar_songs._api(token, "search", q=query, type="track", limit=5)["tracks"]["items"]
+    except similar_songs.SimilarSongsError:
+        items = []
+    scored = [(match_confidence(query, t), t) for t in items]
+    if not scored:
+        return None, "notfound", "Couldn't find this song. Check the spelling or add the artist."
+    confidence, track = max(scored, key=lambda p: p[0])  # Spotify's own order breaks ties
+    if confidence < UNSURE_CONFIDENCE:
+        return None, "notfound", "Couldn't find a close match. Check the spelling or add the artist."
+    if confidence < OK_CONFIDENCE or len(_words(query)) < 2:
+        # a single word ("Levels") fits many songs even when it matches perfectly
+        return track, "unsure", f"Not sure this is the right song; we guessed \"{similar_songs._label(track)}\". Adding the artist helps, e.g. \"Artist - Song\"."
+    return track, "ok", ""
+
+
+def check_entries(queries: list) -> tuple:
+    """Splits entries into usable ones and (entry, reason) pairs that are clearly not song names."""
+    usable, skipped = [], []
+    for q in queries:
+        if re.match(r"(?i)^(https?://|www\.)", q) or " http" in q.lower():
+            skipped.append((q, "This is a web link, not a song name. Paste YouTube links in the box at the top of the page instead."))
+        elif len(q) > MAX_ENTRY_LENGTH:
+            skipped.append((q[:60] + "…", "This line is very long, like a sentence or lyrics. Put one song name on each line."))
+        elif not re.search(r"[^\W\d_]", q):
+            skipped.append((q, "This has no letters, so it can't be a song name."))
+        else:
+            usable.append(q)
+    return usable, skipped
 
 
 def _resolve(query: str, token: str | None) -> dict:
     """Finds the song on Spotify (when set up) for a clean name and length, then a YouTube link."""
     if token:
-        try:
-            items = similar_songs._api(token, "search", q=query, type="track", limit=1)["tracks"]["items"]
-        except similar_songs.SimilarSongsError:
-            items = []
-        if items and _looks_related(query, items[0]):
-            t = items[0]
+        track, status, hint = best_match(token, query)
+        if track:
             return {
                 "query": query,
-                "name": similar_songs._label(t),
-                "url": youtube_match.find_link(t["name"], t["artists"][0]["name"], t["duration_ms"]),
+                "name": similar_songs._label(track),
+                "url": youtube_match.find_link(track["name"], track["artists"][0]["name"], track["duration_ms"]),
+                "status": status,
+                "hint": hint,
             }
-    return {"query": query, "name": query, "url": youtube_match.find_link(query, "", None)}
+        return {"query": query, "name": query, "url": None, "status": status, "hint": hint}
+    # without Spotify there is nothing to check the match against
+    return {"query": query, "name": query, "url": youtube_match.find_link(query, "", None), "status": "ok", "hint": ""}
 
 
 def resolve_songs(queries: list[str]) -> list[dict]:
