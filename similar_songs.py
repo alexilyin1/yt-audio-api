@@ -84,6 +84,7 @@ def video_song_query(video_url: str) -> tuple[str, str]:
 
 def _base_name(name: str) -> str:
     """'Song - 2022 Remaster' / 'Song (Live)' -> 'song', so versions of one song count as the same."""
+    name = name.replace("\u2019", "'").replace("\u2018", "'")  # Spotify mixes curly and straight apostrophes
     return re.split(r"\s+-\s+|\s*[\(\[]", name, maxsplit=1)[0].strip().lower()
 
 
