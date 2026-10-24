@@ -11,6 +11,9 @@
   input[type=text] { width: 100%; box-sizing: border-box; padding: .75rem; font-size: 1rem; border: 1px solid #bbb; border-radius: 8px; }
   button { margin-top: 1rem; padding: .75rem 1.5rem; font-size: 1rem; border: 0; border-radius: 8px; background: #d32f2f; color: #fff; cursor: pointer; }
   button:disabled { background: #999; cursor: wait; }
+  button.small { margin: 0 0 0 .25rem; padding: .25rem .7rem; font-size: .85rem; background: #d32f2f; }
+  #simlist li { margin-bottom: .6rem; }
+  #sim:disabled { background: #ccc !important; cursor: not-allowed; }
   progress { width: 100%; height: 1.2rem; }
   #status { margin-top: 1.25rem; min-height: 1.5rem; }
   .error { color: #b00020; }
@@ -23,7 +26,11 @@
   <label for="url">Paste a YouTube link:</label>
   <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." autofocus>
   <button id="go">Convert to MP3</button>
+  <button id="sim" disabled style="background:#1db954;margin-left:.5rem">Find similar songs</button>
+  <div id="simhint" style="font-size:.85rem;color:#666;margin-top:.5rem"></div>
+  <ol id="simlist"></ol>
   <div id="status" aria-live="polite"></div>
+  <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
 </main>
 <script>
 const urlBox = document.getElementById('url');
@@ -37,34 +44,118 @@ function showError(msg) {
   status.firstChild.textContent = msg;
 }
 
+// Converts one YouTube link; calls onUpdate(label, percent|null) along the way, resolves to the download token
+async function runConversion(url, onUpdate) {
+  onUpdate('Starting…', 0);
+  const res = await fetch('/start?url=' + encodeURIComponent(url));
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+  while (true) {
+    await new Promise(r => setTimeout(r, 500));
+    const p = await (await fetch('/progress?job=' + encodeURIComponent(data.job))).json();
+    if (p.state === 'error') throw new Error(p.error || 'Something went wrong.');
+    if (p.state === 'done') return p.token;
+    if (p.state === 'downloading') onUpdate('Downloading… ' + p.percent + '%', p.percent);
+    else onUpdate(LABELS[p.state], null);
+  }
+}
+
+function downloadLink(token) {
+  const a = document.createElement('a');
+  a.className = 'dl';
+  a.href = '/download?token=' + encodeURIComponent(token);
+  a.textContent = '⬇ Download MP3';
+  return a;
+}
+
 async function convert() {
   const url = urlBox.value.trim();
   if (!url) { showError('Please paste a YouTube link first.'); return; }
   btn.disabled = true;
-  status.innerHTML = '<div id="label">Starting…</div><progress id="bar" max="100" value="0"></progress>';
+  status.innerHTML = '<div id="label"></div><progress id="bar" max="100" value="0"></progress>';
+  const label = document.getElementById('label');
+  const bar = document.getElementById('bar');
   try {
-    const res = await fetch('/start?url=' + encodeURIComponent(url));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-    while (true) {
-      await new Promise(r => setTimeout(r, 500));
-      const p = await (await fetch('/progress?job=' + encodeURIComponent(data.job))).json();
-      if (p.state === 'error') throw new Error(p.error || 'Something went wrong.');
-      if (p.state === 'done') {
-        status.innerHTML = '<a class="dl" href="/download?token=' + encodeURIComponent(p.token) + '">⬇ Download MP3</a>';
-        break;
-      }
-      const bar = document.getElementById('bar');
-      document.getElementById('label').textContent =
-        p.state === 'downloading' ? 'Downloading… ' + p.percent + '%' : LABELS[p.state];
-      if (p.state === 'converting') bar.removeAttribute('value'); else bar.value = p.percent;
-    }
+    const token = await runConversion(url, (text, percent) => {
+      label.textContent = text;
+      if (percent === null) bar.removeAttribute('value'); else bar.value = percent;
+    });
+    status.replaceChildren(downloadLink(token));
   } catch (e) {
     showError(e.message);
   } finally {
     btn.disabled = false;
   }
 }
+
+// One "Download MP3" button for a similar song; turns into a progress text, then a download link
+function songDownloader(youtubeUrl) {
+  const holder = document.createElement('span');
+  const button = document.createElement('button');
+  button.className = 'small';
+  button.textContent = '⬇ Download MP3';
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const token = await runConversion(youtubeUrl, text => { button.textContent = text; });
+      holder.replaceChildren(downloadLink(token));
+    } catch (e) {
+      button.disabled = false;
+      button.textContent = '⬇ Try again';
+      holder.title = e.message;
+    }
+  });
+  holder.appendChild(button);
+  return holder;
+}
+const sim = document.getElementById('sim');
+const simHint = document.getElementById('simhint');
+const simList = document.getElementById('simlist');
+
+// Similar songs needs the Spotify keys; stay greyed out until they are saved
+fetch('/spotify/status').then(r => r.json()).then(d => {
+  sim.disabled = !d.configured;
+  simHint.innerHTML = d.configured ? '' : 'To find similar songs, <a href="/spotify">set up Spotify first</a>.';
+}).catch(() => {});
+
+sim.addEventListener('click', async () => {
+  const url = urlBox.value.trim();
+  simList.innerHTML = '';
+  if (!url) { simHint.textContent = 'Please paste a YouTube link first.'; return; }
+  sim.disabled = true;
+  simHint.textContent = 'Looking up songs…';
+  try {
+    const res = await fetch('/similar?url=' + encodeURIComponent(url));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    simHint.textContent = 'Songs like ' + data.song + ':';
+    data.similar.forEach(song => {
+      const li = document.createElement('li');
+      li.textContent = song.name + ' ';
+      if (song.url) {
+        const a = document.createElement('a');
+        a.href = song.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = '▶ YouTube';
+        li.appendChild(a);
+        li.appendChild(document.createTextNode(' '));
+        li.appendChild(songDownloader(song.url));
+      } else {
+        const none = document.createElement('span');
+        none.style.color = '#888';
+        none.textContent = '(no clean audio found)';
+        li.appendChild(none);
+      }
+      simList.appendChild(li);
+    });
+  } catch (e) {
+    simHint.textContent = e.message;
+  } finally {
+    sim.disabled = false;
+  }
+});
+
 btn.addEventListener('click', convert);
 urlBox.addEventListener('keydown', e => { if (e.key === 'Enter') convert(); });
 </script>
