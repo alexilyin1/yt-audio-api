@@ -8,12 +8,28 @@ Crafted with precision by Alperen Sümeroğlu — powering clean and configurabl
 """
 
 import os
+import sys
 from pathlib import Path
 
 # --- Directory Configurations ---
 ROOT_DIRECTORY = Path(__file__).resolve().parent
+IS_DESKTOP_APP = getattr(sys, "frozen", False)  # True inside the packaged (PyInstaller) app
+
+
+def _data_directory() -> Path:
+    """Where .env and downloads live. The packaged app's own folder is read-only, so use the user's."""
+    if os.environ.get("YT_AUDIO_DATA_DIR"):
+        return Path(os.environ["YT_AUDIO_DATA_DIR"])
+    if not IS_DESKTOP_APP:
+        return ROOT_DIRECTORY
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "YT Audio"
+    return Path.home() / ".yt-audio"
+
+
+DATA_DIRECTORY = _data_directory()
 DOWNLOADS_DIRECTORY = 'downloads'
-ABS_DOWNLOADS_PATH = str(ROOT_DIRECTORY / DOWNLOADS_DIRECTORY)
+ABS_DOWNLOADS_PATH = str(DATA_DIRECTORY / DOWNLOADS_DIRECTORY)
 
 # --- HTTP Response Codes ---
 REQUEST_TIMEOUT = 408       # Used when token is expired

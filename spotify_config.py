@@ -11,9 +11,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from constants import ROOT_DIRECTORY
+from constants import DATA_DIRECTORY
 
-ENV_PATH = Path(ROOT_DIRECTORY) / ".env"
+ENV_PATH = Path(DATA_DIRECTORY) / ".env"
 ID_KEY = "SPOTIFY_CLIENT_ID"
 SECRET_KEY = "SPOTIFY_CLIENT_SECRET"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -39,6 +39,7 @@ def is_configured() -> bool:
 def save_credentials(client_id: str, client_secret: str) -> None:
     """Sets the two Spotify keys in .env, keeping every other line as it was."""
     updates = {ID_KEY: client_id, SECRET_KEY: client_secret}
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
     lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
     out = []
     for line in lines:

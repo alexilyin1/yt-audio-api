@@ -39,6 +39,7 @@
   <div id="imphint" style="font-size:.85rem;color:#666;margin-top:.5rem" aria-live="polite"></div>
   <ol id="implist"></ol>
   <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
+  <p id="quitrow" hidden style="font-size:.85rem"><a href="#" id="quit">Quit YT Audio</a></p>
 </main>
 <script>
 const urlBox = document.getElementById('url');
@@ -201,6 +202,16 @@ imp.addEventListener('click', async () => {
   } finally {
     imp.disabled = false;
   }
+});
+
+// Only the desktop app has a Quit link; there is no terminal to close
+fetch('/app-info').then(r => r.json()).then(d => {
+  document.getElementById('quitrow').hidden = !d.desktop;
+}).catch(() => {});
+document.getElementById('quit').addEventListener('click', async e => {
+  e.preventDefault();
+  try { await fetch('/quit', { method: 'POST' }); } catch (err) {}
+  document.body.innerHTML = '<main><h1>YT Audio has quit.</h1><p>You can close this tab.</p></main>';
 });
 
 btn.addEventListener('click', convert);

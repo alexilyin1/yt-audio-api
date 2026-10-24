@@ -1,0 +1,52 @@
+name: Build Mac app
+
+# Run by pushing a tag like v1.0.0 (publishes a release), or by hand from the Actions tab (build only)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest       # Apple Silicon (M1 and newer)
+            arch: apple-silicon
+          - runner: macos-15-intel     # Intel Macs
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-build.txt
+      - name: Build the app
+        run: |
+          pyinstaller --noconfirm --windowed --name "YT Audio" \
+            --add-data "templates:templates" \
+            --collect-submodules yt_dlp --collect-all imageio_ffmpeg --collect-data certifi \
+            desktop_app.py
+      - name: Zip the app
+        run: ditto -c -k --keepParent "dist/YT Audio.app" "YT-Audio-mac-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YT-Audio-mac-${{ matrix.arch }}
+          path: YT-Audio-mac-${{ matrix.arch }}.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" *.zip --repo "${{ github.repository }}" --generate-notes

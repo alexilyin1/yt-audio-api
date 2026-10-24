@@ -5,6 +5,7 @@ Clean, modular Flask-based backend for downloading and serving YouTube audio tra
 Utilizes yt-dlp and FFmpeg for conversion and token-based access management.
 """
 
+import os
 import secrets
 import threading
 from flask import Flask, request, jsonify, send_from_directory, render_template
@@ -217,16 +218,29 @@ def _generate_token_response(filename: str):
     return jsonify(token=token)
 
 
+@app.route("/app-info", methods=["GET"])
+def app_info():
+    """Lets the page know whether it is running as the desktop app (which has a Quit link)."""
+    return jsonify(desktop=IS_DESKTOP_APP)
+
+
+@app.route("/quit", methods=["POST"])
+def quit_app():
+    """Desktop app only: stops the program, since closing the browser tab doesn't."""
+    if not IS_DESKTOP_APP:
+        return jsonify(error="Not available."), NOT_FOUND
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+    return jsonify(ok=True)
+
+
+def start_token_cleaner():
+    """Starts the background thread that deletes expired tokens and their files."""
+    threading.Thread(target=access_manager.manage_tokens, daemon=True).start()
+
+
 def main():
-    """
-    Starts the background thread for automatic token cleanup
-    and launches the Flask development server.
-    """
-    token_cleaner_thread = threading.Thread(
-        target=access_manager.manage_tokens,
-        daemon=True
-    )
-    token_cleaner_thread.start()
+    """Developer mode: token cleanup plus the Flask development server with auto-reload."""
+    start_token_cleaner()
     app.run(debug=True)
 
 
