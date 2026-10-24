@@ -17,6 +17,7 @@ import urllib.request
 import yt_dlp
 from concurrent.futures import ThreadPoolExecutor
 import spotify_config
+import youtube_match
 
 MAX_PER_ARTIST = 2  # keep the list from being dominated by one artist
 API = "https://api.spotify.com/v1/"
@@ -160,4 +161,12 @@ def find_similar(video_url: str, limit: int = 10) -> dict:
         others = _api(token, "search", q=f"year:{year}", type="track", limit=50)["tracks"]["items"]
         add(sorted(others, key=lambda t: -t["popularity"]))
 
-    return {"song": _label(seed), "similar": [_label(t) for t in results]}
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        links = list(pool.map(
+            lambda t: youtube_match.find_link(t["name"], t["artists"][0]["name"], t["duration_ms"]),
+            results,
+        ))
+    return {
+        "song": _label(seed),
+        "similar": [{"name": _label(t), "url": link} for t, link in zip(results, links)],
+    }

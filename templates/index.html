@@ -91,9 +91,22 @@ sim.addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     simHint.textContent = 'Songs like ' + data.song + ':';
-    data.similar.forEach(name => {
+    data.similar.forEach(song => {
       const li = document.createElement('li');
-      li.textContent = name;
+      li.textContent = song.name + ' ';
+      if (song.url) {
+        const a = document.createElement('a');
+        a.href = song.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = '▶ YouTube';
+        li.appendChild(a);
+      } else {
+        const none = document.createElement('span');
+        none.style.color = '#888';
+        none.textContent = '(no clean audio found)';
+        li.appendChild(none);
+      }
       simList.appendChild(li);
     });
   } catch (e) {
