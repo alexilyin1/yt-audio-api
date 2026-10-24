@@ -64,7 +64,7 @@ Your keys are stored only on your computer, in `~/Library/Application Support/YT
 > **Note:** Spotify no longer offers its own "recommendations" feature to new apps, so the suggestions come from songs that appear in the same playlists as your song (plus other songs by the same artist). Results are good but not perfect.
 
 ### 3. Importing a list of songs
-Use **Import a list of songs** on the main page. Paste names (one per line, or separated by commas, tabs or semicolons) or choose a `.txt`/`.csv` file. CSV exports with *Track Name* and *Artist* columns work too. Each song gets a YouTube link and a **Download MP3** button, and **Download all as ZIP** converts the whole list and gives you one zip file (songs that can't be downloaded are skipped and listed).
+Use **Import a list of songs** on the main page. Paste names (one per line, or separated by commas, tabs or semicolons) or choose a `.txt`/`.csv` file. CSV exports with *Track Name* and *Artist* columns work too. Each song gets a YouTube link and a **Download MP3** button, **Download all as ZIP** converts the whole list into one zip file (songs that can't be downloaded are skipped and listed), and **Find similar songs for these** (needs Spotify set up) opens a page with 10 similar songs for every song on your list, each with a YouTube link, a Download MP3 button and a **Download as ZIP** button for its group. Lists are limited to 100 songs.
 
 ### For developers
 - Run from source: `pip install -r requirements.txt` then `python main.py` and open <http://localhost:5000>.

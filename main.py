@@ -77,8 +77,9 @@ def _run_job(job_id: str, video_url: str) -> None:
         job.update(state="error", error=str(e))
 
 
-MAX_ZIP_SONGS = 50
+MAX_ZIP_SONGS = 100
 ZIP_PARALLEL = 3  # songs converted at the same time
+BULK_SIMILAR_PARALLEL = 3  # imported songs looked up at the same time
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 
 
@@ -129,6 +130,69 @@ def _run_zip_job(job_id: str, songs: list) -> None:
     finally:
         for filename, _ in converted:
             (Path(ABS_DOWNLOADS_PATH) / filename).unlink(missing_ok=True)
+
+
+@app.route("/bulk-similar", methods=["GET"])
+def bulk_similar_page():
+    """Page listing similar songs for every song of an imported list."""
+    return render_template("bulk_similar.html")
+
+
+def _run_bulk_similar(job_id: str, queries: list) -> None:
+    """Thread target: finds similar songs for each query, recording each result as it finishes."""
+    job = jobs[job_id]
+    try:
+        token = similar_songs._get_token()
+    except similar_songs.SimilarSongsError as e:
+        job.update(state="error", error=str(e))
+        return
+
+    def one(index_query):
+        index, query = index_query
+        try:
+            seed = similar_songs.seed_from_queries(token, [query])
+            if not song_import._looks_related(query, seed):  # Spotify returns something even for nonsense
+                raise similar_songs.SimilarSongsError(f"Couldn't find \"{query}\" on Spotify.")
+            result = similar_songs.similar_for_seed(token, seed)
+            entry = {"index": index, "query": query, **result}
+        except similar_songs.SimilarSongsError as e:
+            entry = {"index": index, "query": query, "error": str(e)}
+        except Exception:
+            entry = {"index": index, "query": query, "error": "Something went wrong with this song."}
+        job["finished"].append(entry)
+        job["done"] += 1
+
+    with ThreadPoolExecutor(max_workers=BULK_SIMILAR_PARALLEL) as pool:
+        list(pool.map(one, enumerate(queries)))
+    job["state"] = "done"
+
+
+@app.route("/bulk/start", methods=["POST"])
+def bulk_start():
+    """Body {"queries": ["song", ...]} (max 100). Poll /bulk/progress for results as they finish."""
+    data = request.get_json(silent=True) or {}
+    queries = [q.strip() for q in data.get("queries", []) if isinstance(q, str) and q.strip()]
+    queries = queries[:song_import.MAX_SONGS]
+    if not queries:
+        return jsonify(error="No songs to look up."), BAD_REQUEST
+    if not spotify_config.is_configured():
+        return jsonify(error="Spotify isn't set up yet."), BAD_REQUEST
+    job_id = secrets.token_urlsafe(8)
+    jobs[job_id] = {"state": "working", "done": 0, "total": len(queries), "finished": []}
+    threading.Thread(target=_run_bulk_similar, args=(job_id, queries), daemon=True).start()
+    return jsonify(job=job_id, total=len(queries))
+
+
+@app.route("/bulk/progress", methods=["GET"])
+def bulk_progress():
+    """Returns the results finished since the client last asked (`have` = how many it already has)."""
+    job = jobs.get(request.args.get("job", ""))
+    if job is None:
+        return jsonify(error="Unknown job."), NOT_FOUND
+    have = request.args.get("have", 0, type=int)
+    finished = job["finished"]
+    return jsonify(state=job["state"], error=job.get("error"), done=job["done"],
+                   total=job["total"], results=finished[have:])
 
 
 @app.route("/zip/start", methods=["POST"])
@@ -243,7 +307,9 @@ def import_songs():
     queries = song_import.parse_songs(str(data.get("text", "")))
     if not queries:
         return jsonify(error="I couldn't find any song names in that."), BAD_REQUEST
-    return jsonify(songs=song_import.resolve_songs(queries))
+    found = len(queries)
+    songs = song_import.resolve_songs(queries[:song_import.MAX_SONGS])
+    return jsonify(songs=songs, found=found, limit=song_import.MAX_SONGS)
 
 
 @app.route("/download", methods=["GET"])

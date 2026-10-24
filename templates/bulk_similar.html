@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Similar songs for your list</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  body { font-family: system-ui, sans-serif; background: #f4f4f7; margin: 0; padding: 2rem 1rem; color: #222; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; }
+  section { background: #fff; padding: 1.25rem 1.5rem; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 1rem; }
+  section h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
+  section ol { padding-left: 1.5rem; }
+  li { margin-bottom: .55rem; }
+  .muted { color: #666; font-size: .9rem; }
+  #top { position: sticky; top: 0; background: #f4f4f7; padding: .5rem 0 .75rem; z-index: 1; }
+  section button { margin-top: .25rem; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="/">← Back</a></p>
+  <h1>🎵 Similar songs for your list</h1>
+  <div id="top">
+    <div id="summary" class="muted" aria-live="polite">Starting…</div>
+    <progress id="bar" max="100" value="0"></progress>
+  </div>
+  <div id="groups"></div>
+</main>
+<script src="/static/common.js"></script>
+<script>
+const summary = document.getElementById('summary');
+const bar = document.getElementById('bar');
+const groups = document.getElementById('groups');
+const sections = [];  // one placeholder <section> per imported song, in the order they were entered
+
+function fail(msg) {
+  bar.hidden = true;
+  summary.className = 'error';
+  summary.textContent = msg;
+}
+
+// Fills a song's section with its related songs, a ZIP button for the group, or an error
+function fillSection(section, result) {
+  section.replaceChildren();
+  const h = document.createElement('h2');
+  h.textContent = result.error ? result.query : 'Songs like ' + result.song;
+  section.appendChild(h);
+  if (result.error) {
+    const e = document.createElement('div');
+    e.className = 'error';
+    e.textContent = result.error;
+    section.appendChild(e);
+    return;
+  }
+  const downloadable = result.similar.filter(s => s.url);
+  if (downloadable.length > 1) section.appendChild(zipButton(downloadable, 'Download these ' + downloadable.length + ' as ZIP'));
+  const list = document.createElement('ol');
+  result.similar.forEach(song => list.appendChild(songRow(song)));
+  section.appendChild(list);
+}
+
+async function run(queries) {
+  queries.forEach(q => {
+    const s = document.createElement('section');
+    s.innerHTML = '<h2></h2><div class="muted">Looking up similar songs…</div>';
+    s.firstChild.textContent = q;
+    groups.appendChild(s);
+    sections.push(s);
+  });
+  const res = await fetch('/bulk/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queries }),
+  });
+  const data = await res.json();
+  if (!res.ok) return fail(data.error || 'Something went wrong.');
+  let have = 0;
+  while (true) {
+    const p = await (await fetch('/bulk/progress?job=' + encodeURIComponent(data.job) + '&have=' + have)).json();
+    if (p.error && p.state === 'error') return fail(p.error);
+    p.results.forEach(r => fillSection(sections[r.index], r));
+    have += p.results.length;
+    bar.value = p.total ? p.done / p.total * 100 : 0;
+    summary.textContent = p.state === 'done'
+      ? 'Done: similar songs found for ' + p.total + ' song' + (p.total === 1 ? '' : 's') + '.'
+      : 'Finished ' + p.done + ' of ' + p.total + '. Results appear below as they are ready; this can take a few minutes for long lists.';
+    if (p.state === 'done') { bar.hidden = true; return; }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+
+let queries = [];
+try { queries = JSON.parse(sessionStorage.getItem('bulkQueries') || '[]'); } catch (e) {}
+if (!queries.length) {
+  fail('There are no songs to look up. Go back, import a list of songs, and click "Find similar songs for these".');
+} else {
+  run(queries).catch(e => fail(e.message));
+}
+</script>
+</body>
+</html>

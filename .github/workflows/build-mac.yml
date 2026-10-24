@@ -32,7 +32,7 @@ jobs:
       - name: Build the app
         run: |
           pyinstaller --noconfirm --windowed --name "YT Audio" \
-            --add-data "templates:templates" \
+            --add-data "templates:templates" --add-data "static:static" \
             --collect-submodules yt_dlp --collect-all imageio_ffmpeg --collect-data certifi \
             desktop_app.py
       - name: Check the app starts
