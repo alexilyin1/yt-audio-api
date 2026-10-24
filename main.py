@@ -7,10 +7,11 @@ Utilizes yt-dlp and FFmpeg for conversion and token-based access management.
 
 import secrets
 import threading
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from uuid import uuid4
 from pathlib import Path
 import yt_dlp
+import imageio_ffmpeg
 import access_manager
 from constants import *
 
@@ -18,7 +19,83 @@ from constants import *
 app = Flask(__name__)
 
 
+# Background conversion jobs for the GUI's progress bar: job_id -> status dict
+jobs = {}
+
+
+def _convert(video_url: str, filename: str, progress_hook=None) -> None:
+    """Download the audio of video_url and convert it to ABS_DOWNLOADS_PATH/filename (mp3)."""
+    output_path = Path(ABS_DOWNLOADS_PATH) / filename
+
+    # yt-dlp configuration for downloading best audio and converting to mp3
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': str(output_path.with_suffix('')),  # yt-dlp adds .mp3 itself
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192'
+        }],
+        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(),  # bundled, no system install needed
+        'noplaylist': True,  # a link with &list=... should convert only that video
+        'quiet': True,
+        'noprogress': True,
+        'progress_hooks': [progress_hook] if progress_hook else [],
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([video_url])
+
+
+def _run_job(job_id: str, video_url: str) -> None:
+    """Thread target: runs a conversion and records its progress in jobs[job_id]."""
+    job = jobs[job_id]
+    filename = f"{uuid4()}.mp3"
+
+    def hook(d):
+        if d["status"] == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            if total:
+                job["percent"] = round(d["downloaded_bytes"] / total * 100)
+        elif d["status"] == "finished":
+            job.update(state="converting", percent=100)
+
+    try:
+        _convert(video_url, filename, hook)
+        token = secrets.token_urlsafe(TOKEN_LENGTH)
+        access_manager.add_token(token, filename)
+        job.update(state="done", token=token)
+    except Exception as e:
+        job.update(state="error", error=str(e))
+
+
+@app.route("/start", methods=["GET"])
+def start_job():
+    """Start a conversion in the background. Returns {"job": <id>}; poll /progress."""
+    video_url = request.args.get("url")
+    if not video_url:
+        return jsonify(error="Missing 'url' parameter in request."), BAD_REQUEST
+    job_id = secrets.token_urlsafe(8)
+    jobs[job_id] = {"state": "downloading", "percent": 0}
+    threading.Thread(target=_run_job, args=(job_id, video_url), daemon=True).start()
+    return jsonify(job=job_id)
+
+
+@app.route("/progress", methods=["GET"])
+def job_progress():
+    """Returns {"state": downloading|converting|done|error, "percent": 0-100, "token"/"error"}."""
+    job = jobs.get(request.args.get("job", ""))
+    if job is None:
+        return jsonify(error="Unknown job."), NOT_FOUND
+    return jsonify(job)
+
+
 @app.route("/", methods=["GET"])
+def index():
+    """Simple GUI: a page with a box to paste a YouTube link."""
+    return render_template("index.html")
+
+
+@app.route("/convert", methods=["GET"])
 def handle_audio_request():
     """
     Main endpoint to receive a YouTube video URL, download the audio in MP3 format,
@@ -35,23 +112,8 @@ def handle_audio_request():
         return jsonify(error="Missing 'url' parameter in request."), BAD_REQUEST
 
     filename = f"{uuid4()}.mp3"
-    output_path = Path(ABS_DOWNLOADS_PATH) / filename
-
-    # yt-dlp configuration for downloading best audio and converting to mp3
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': str(output_path),
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192'
-        }],
-        'quiet': True
-    }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
+        _convert(video_url, filename)
     except Exception as e:
         return jsonify(error="Failed to download or convert audio.", detail=str(e)), INTERNAL_SERVER_ERROR
 
@@ -82,7 +144,7 @@ def download_audio():
 
     try:
         filename = access_manager.get_audio_file(token)
-        return send_from_directory(ABS_DOWNLOADS_PATH, filename=filename, as_attachment=True)
+        return send_from_directory(ABS_DOWNLOADS_PATH, filename, as_attachment=True)
     except FileNotFoundError:
         return jsonify(error="Requested file could not be found on the server."), NOT_FOUND
 
