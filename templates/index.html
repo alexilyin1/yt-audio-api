@@ -11,6 +11,7 @@
   input[type=text] { width: 100%; box-sizing: border-box; padding: .75rem; font-size: 1rem; border: 1px solid #bbb; border-radius: 8px; }
   button { margin-top: 1rem; padding: .75rem 1.5rem; font-size: 1rem; border: 0; border-radius: 8px; background: #d32f2f; color: #fff; cursor: pointer; }
   button:disabled { background: #999; cursor: wait; }
+  progress { width: 100%; height: 1.2rem; }
   #status { margin-top: 1.25rem; min-height: 1.5rem; }
   .error { color: #b00020; }
   a.dl { display: inline-block; padding: .6rem 1.2rem; background: #2e7d32; color: #fff; border-radius: 8px; text-decoration: none; }
@@ -29,19 +30,37 @@ const urlBox = document.getElementById('url');
 const btn = document.getElementById('go');
 const status = document.getElementById('status');
 
+const LABELS = { downloading: 'Downloading', converting: 'Converting to MP3…' };
+
+function showError(msg) {
+  status.innerHTML = '<span class="error"></span>';
+  status.firstChild.textContent = msg;
+}
+
 async function convert() {
   const url = urlBox.value.trim();
-  if (!url) { status.innerHTML = '<span class="error">Please paste a YouTube link first.</span>'; return; }
+  if (!url) { showError('Please paste a YouTube link first.'); return; }
   btn.disabled = true;
-  status.textContent = 'Converting… this can take a minute.';
+  status.innerHTML = '<div id="label">Starting…</div><progress id="bar" max="100" value="0"></progress>';
   try {
-    const res = await fetch('/convert?url=' + encodeURIComponent(url));
+    const res = await fetch('/start?url=' + encodeURIComponent(url));
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-    status.innerHTML = '<a class="dl" href="/download?token=' + encodeURIComponent(data.token) + '">⬇ Download MP3</a>';
+    while (true) {
+      await new Promise(r => setTimeout(r, 500));
+      const p = await (await fetch('/progress?job=' + encodeURIComponent(data.job))).json();
+      if (p.state === 'error') throw new Error(p.error || 'Something went wrong.');
+      if (p.state === 'done') {
+        status.innerHTML = '<a class="dl" href="/download?token=' + encodeURIComponent(p.token) + '">⬇ Download MP3</a>';
+        break;
+      }
+      const bar = document.getElementById('bar');
+      document.getElementById('label').textContent =
+        p.state === 'downloading' ? 'Downloading… ' + p.percent + '%' : LABELS[p.state];
+      if (p.state === 'converting') bar.removeAttribute('value'); else bar.value = p.percent;
+    }
   } catch (e) {
-    status.innerHTML = '<span class="error"></span>';
-    status.firstChild.textContent = e.message;
+    showError(e.message);
   } finally {
     btn.disabled = false;
   }
