@@ -5,6 +5,7 @@ Finds songs "like" a YouTube video using only the Spotify endpoints still open t
 new apps (search and artist top tracks). Spotify's real recommendations endpoint
 is closed to us, so similarity here is approximate: the artist's other popular
 tracks first, then tracks from the same year.
+Songs that share playlists with the seed song are ranked first.
 """
 
 import base64
@@ -14,8 +15,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import yt_dlp
+from concurrent.futures import ThreadPoolExecutor
 import spotify_config
 
+MAX_PER_ARTIST = 2  # keep the list from being dominated by one artist
 API = "https://api.spotify.com/v1/"
 # Tags YouTube uploaders add to titles, which would confuse the Spotify search
 _NOISE = re.compile(
@@ -82,6 +85,36 @@ def _label(track: dict) -> str:
     return f"{track['name']} — {track['artists'][0]['name']}"
 
 
+def _playlist_neighbours(token: str, seed: dict, seed_base: str) -> list:
+    """Tracks ranked by how often they sit in the same playlists as the seed song."""
+    found = {}
+    for q in (f"{seed['name']} {seed['artists'][0]['name']}", seed["name"]):
+        for p in _api(token, "search", q=q, type="playlist", limit=10)["playlists"]["items"]:
+            if p and p["id"] not in found and 5 <= p["tracks"]["total"] <= 150:
+                found[p["id"]] = p
+
+    def fetch(playlist_id):
+        try:
+            return _api(token, f"playlists/{playlist_id}/tracks", limit=100, market="US")["items"]
+        except SimilarSongsError:
+            return []
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        playlists = list(pool.map(fetch, found))
+
+    scores, by_id = {}, {}
+    for items in playlists:
+        tracks = [i["track"] for i in items if i.get("track") and i["track"].get("id")]
+        if not any(_base_name(t["name"]) == seed_base for t in tracks):
+            continue  # playlist only matched the title, not the song
+        for t in tracks:
+            by_id[t["id"]] = t
+            scores[t["id"]] = scores.get(t["id"], 0) + len(tracks) ** -0.5  # small playlists count more
+    # popularity breaks ties and favours well-known songs
+    ranked = sorted(scores, key=lambda i: (-scores[i], -by_id[i]["popularity"]))
+    return [by_id[i] for i in ranked]
+
+
 def find_similar(video_url: str, limit: int = 10) -> dict:
     query, artist_hint = video_song_query(video_url)
     token = _get_token()
@@ -96,23 +129,35 @@ def find_similar(video_url: str, limit: int = 10) -> dict:
     if not seed:
         raise SimilarSongsError(f"Couldn't find \"{query}\" on Spotify.")
 
-    results, seen = [], {_base_name(seed["name"])}
+    seed_base = _base_name(seed["name"])
+    seed_artist = seed["artists"][0]
+    results, seen = [], {seed_base}
+    per_artist = {}
 
     def add(tracks):
         for t in tracks:
+            if len(results) >= limit:
+                return
             # skip the song itself and other versions of any song already listed
             base = _base_name(t["name"])
-            if base in seen:
+            if base in seen or seed_base in base:  # also covers covers/remixes of the seed song
                 continue
+            artist_id = t["artists"][0]["id"]
+            if per_artist.get(artist_id, 0) >= MAX_PER_ARTIST:
+                continue
+            per_artist[artist_id] = per_artist.get(artist_id, 0) + 1
             seen.add(base)
             results.append(t)
 
-    artist_id = seed["artists"][0]["id"]
-    add(_api(token, "artists/" + artist_id + "/top-tracks", market="US")["tracks"])
+    # 1) Songs that share playlists with the seed song (best signal available)
+    add(_playlist_neighbours(token, seed, seed_base))
 
-    if len(results) < limit:  # fill up with other artists' tracks from the same year
+    # 2) Fill up: the artist's top tracks (capped), then popular tracks from the same year
+    if len(results) < limit:
+        add(_api(token, "artists/" + seed_artist["id"] + "/top-tracks", market="US")["tracks"])
+    if len(results) < limit:
         year = seed["album"]["release_date"][:4]
         others = _api(token, "search", q=f"year:{year}", type="track", limit=50)["tracks"]["items"]
-        add(t for t in sorted(others, key=lambda t: -t["popularity"]) if t["artists"][0]["id"] != artist_id)
+        add(sorted(others, key=lambda t: -t["popularity"]))
 
-    return {"song": _label(seed), "similar": [_label(t) for t in results[:limit]]}
+    return {"song": _label(seed), "similar": [_label(t) for t in results]}
