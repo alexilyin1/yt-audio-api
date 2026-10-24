@@ -7,10 +7,11 @@ Utilizes yt-dlp and FFmpeg for conversion and token-based access management.
 
 import secrets
 import threading
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from uuid import uuid4
 from pathlib import Path
 import yt_dlp
+import imageio_ffmpeg
 import access_manager
 from constants import *
 
@@ -19,6 +20,12 @@ app = Flask(__name__)
 
 
 @app.route("/", methods=["GET"])
+def index():
+    """Simple GUI: a page with a box to paste a YouTube link."""
+    return render_template("index.html")
+
+
+@app.route("/convert", methods=["GET"])
 def handle_audio_request():
     """
     Main endpoint to receive a YouTube video URL, download the audio in MP3 format,
@@ -40,12 +47,13 @@ def handle_audio_request():
     # yt-dlp configuration for downloading best audio and converting to mp3
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': str(output_path),
+        'outtmpl': str(output_path.with_suffix('')),  # yt-dlp adds .mp3 itself
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192'
         }],
+        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(),  # bundled, no system install needed
         'quiet': True
     }
 
@@ -82,7 +90,7 @@ def download_audio():
 
     try:
         filename = access_manager.get_audio_file(token)
-        return send_from_directory(ABS_DOWNLOADS_PATH, filename=filename, as_attachment=True)
+        return send_from_directory(ABS_DOWNLOADS_PATH, filename, as_attachment=True)
     except FileNotFoundError:
         return jsonify(error="Requested file could not be found on the server."), NOT_FOUND
 
