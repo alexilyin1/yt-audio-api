@@ -11,6 +11,7 @@
   input[type=text] { width: 100%; box-sizing: border-box; padding: .75rem; font-size: 1rem; border: 1px solid #bbb; border-radius: 8px; }
   button { margin-top: 1rem; padding: .75rem 1.5rem; font-size: 1rem; border: 0; border-radius: 8px; background: #d32f2f; color: #fff; cursor: pointer; }
   button:disabled { background: #999; cursor: wait; }
+  #sim:disabled { background: #ccc !important; cursor: not-allowed; }
   progress { width: 100%; height: 1.2rem; }
   #status { margin-top: 1.25rem; min-height: 1.5rem; }
   .error { color: #b00020; }
@@ -23,6 +24,9 @@
   <label for="url">Paste a YouTube link:</label>
   <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." autofocus>
   <button id="go">Convert to MP3</button>
+  <button id="sim" disabled style="background:#1db954;margin-left:.5rem">Find similar songs</button>
+  <div id="simhint" style="font-size:.85rem;color:#666;margin-top:.5rem"></div>
+  <ol id="simlist"></ol>
   <div id="status" aria-live="polite"></div>
   <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
 </main>
@@ -66,6 +70,39 @@ async function convert() {
     btn.disabled = false;
   }
 }
+const sim = document.getElementById('sim');
+const simHint = document.getElementById('simhint');
+const simList = document.getElementById('simlist');
+
+// Similar songs needs the Spotify keys; stay greyed out until they are saved
+fetch('/spotify/status').then(r => r.json()).then(d => {
+  sim.disabled = !d.configured;
+  simHint.innerHTML = d.configured ? '' : 'To find similar songs, <a href="/spotify">set up Spotify first</a>.';
+}).catch(() => {});
+
+sim.addEventListener('click', async () => {
+  const url = urlBox.value.trim();
+  simList.innerHTML = '';
+  if (!url) { simHint.textContent = 'Please paste a YouTube link first.'; return; }
+  sim.disabled = true;
+  simHint.textContent = 'Looking up songs…';
+  try {
+    const res = await fetch('/similar?url=' + encodeURIComponent(url));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    simHint.textContent = 'Songs like ' + data.song + ':';
+    data.similar.forEach(name => {
+      const li = document.createElement('li');
+      li.textContent = name;
+      simList.appendChild(li);
+    });
+  } catch (e) {
+    simHint.textContent = e.message;
+  } finally {
+    sim.disabled = false;
+  }
+});
+
 btn.addEventListener('click', convert);
 urlBox.addEventListener('keydown', e => { if (e.key === 'Enter') convert(); });
 </script>

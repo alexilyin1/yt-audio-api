@@ -14,6 +14,7 @@ import yt_dlp
 import imageio_ffmpeg
 import access_manager
 import spotify_config
+import similar_songs
 from constants import *
 
 # Initialize the Flask application
@@ -146,6 +147,18 @@ def spotify_save():
         return jsonify(error=problem), BAD_REQUEST
     spotify_config.save_credentials(client_id, client_secret)
     return jsonify(ok=True)
+
+
+@app.route("/similar", methods=["GET"])
+def similar():
+    """Finds the song in a YouTube link on Spotify and returns 10 related songs."""
+    video_url = request.args.get("url")
+    if not video_url:
+        return jsonify(error="Missing 'url' parameter in request."), BAD_REQUEST
+    try:
+        return jsonify(similar_songs.find_similar(video_url))
+    except similar_songs.SimilarSongsError as e:
+        return jsonify(error=str(e)), INTERNAL_SERVER_ERROR
 
 
 @app.route("/download", methods=["GET"])
