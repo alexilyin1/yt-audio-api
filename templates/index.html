@@ -32,6 +32,7 @@
   <input id="impfile" type="file" accept=".txt,.csv,text/plain,text/csv" style="margin-top:.5rem">
   <br><button id="imp" style="background:#1565c0">Find these songs</button>
   <div id="imphint" style="font-size:.85rem;color:#666;margin-top:.5rem" aria-live="polite"></div>
+  <div id="impnotes"></div>
   <div id="impactions" style="margin-top:.75rem"></div>
   <ol id="implist"></ol>
   <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
@@ -127,6 +128,7 @@ const impText = document.getElementById('imptext');
 const impHint = document.getElementById('imphint');
 const impList = document.getElementById('implist');
 const impActions = document.getElementById('impactions');
+const impNotes = document.getElementById('impnotes');
 let spotifyReady = false;  // set from /spotify/status below
 
 document.getElementById('impfile').addEventListener('change', e => {
@@ -137,9 +139,44 @@ document.getElementById('impfile').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
+// A notice box under the import: what went wrong with the list and how to fix it
+function showImportNotes(headline, tip, skipped, severe) {
+  impNotes.replaceChildren();
+  if (!headline && !skipped.length) return;
+  const box = document.createElement('div');
+  box.style.cssText = 'margin-top:.75rem;padding:.75rem 1rem;border-radius:8px;font-size:.9rem;' +
+    (severe ? 'background:#fdecea;border:1px solid #e57373' : 'background:#fff8e1;border:1px solid #ffd54f');
+  if (headline) {
+    const p = document.createElement('div');
+    p.style.fontWeight = '600';
+    p.textContent = headline;
+    box.appendChild(p);
+  }
+  if (tip) {
+    const t = document.createElement('div');
+    t.style.marginTop = '.35rem';
+    t.textContent = tip;
+    box.appendChild(t);
+  }
+  if (skipped.length) {
+    const list = document.createElement('ul');
+    list.style.margin = '.5rem 0 0';
+    skipped.forEach(s => {
+      const li = document.createElement('li');
+      const strong = document.createElement('b');
+      strong.textContent = '"' + s.text + '" ';
+      li.append(strong, s.reason);
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+  }
+  impNotes.appendChild(box);
+}
+
 imp.addEventListener('click', async () => {
   impList.innerHTML = '';
   impActions.replaceChildren();
+  impNotes.replaceChildren();
   if (!impText.value.trim()) { impHint.textContent = 'Paste some song names or choose a file first.'; return; }
   imp.disabled = true;
   impHint.textContent = 'Looking up songs… this can take a little while for long lists.';
@@ -150,14 +187,45 @@ imp.addEventListener('click', async () => {
       body: JSON.stringify({ text: impText.value }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-    let msg = 'Found ' + data.songs.length + ' song' + (data.songs.length === 1 ? '' : 's') + ':';
+    if (!res.ok) {
+      impHint.textContent = '';
+      showImportNotes(data.error || 'Something went wrong.', '', data.skipped || [], true);
+      return;
+    }
+    const songs = data.songs;
+    const notFound = songs.filter(s => s.status === 'notfound');
+    const unsure = songs.filter(s => s.status === 'unsure');
+    const skipped = data.skipped;
+    const problems = notFound.length + unsure.length + skipped.length;
+    let msg = 'Found ' + songs.length + ' song' + (songs.length === 1 ? '' : 's') + ':';
     if (data.found > data.limit) msg = 'Your list has ' + data.found + ' songs; using the first ' + data.limit + '. ' + msg;
     impHint.textContent = msg;
-    data.songs.forEach(song => impList.appendChild(songRow(song)));
-    const downloadable = data.songs.filter(s => s.url);
+
+    songs.forEach(song => {
+      const li = songRow(song);
+      if (song.hint) {
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size:.85rem;margin-top:.2rem;color:' + (song.status === 'notfound' ? '#b00020' : '#8a6d00');
+        note.textContent = (song.status === 'notfound' ? '✗ You entered "' + song.query + '". ' : '⚠ ') + song.hint;
+        li.appendChild(note);
+      }
+      impList.appendChild(li);
+    });
+
+    if (problems) {
+      const bad = notFound.length + skipped.length;
+      const total = songs.length + skipped.length;
+      const severe = bad * 2 >= total;
+      const headline = severe
+        ? 'Most of your list couldn\'t be matched (' + bad + ' of ' + total + ' entries). Please check it and try again.'
+        : problems + ' of ' + total + ' entries need a look' + (unsure.length ? ' (a ⚠ means we guessed).' : '.');
+      showImportNotes(headline, data.tip, skipped, severe);
+    }
+
+    const downloadable = songs.filter(s => s.url);
     if (downloadable.length > 1) impActions.appendChild(zipButton(downloadable));
-    impActions.appendChild(similarForListButton(data.songs.map(s => s.query)));
+    const lookable = songs.filter(s => s.status !== 'notfound').map(s => s.query);
+    if (lookable.length) impActions.appendChild(similarForListButton(lookable));
   } catch (e) {
     impHint.textContent = e.message;
   } finally {
