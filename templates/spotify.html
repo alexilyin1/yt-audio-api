@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spotify setup</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f4f4f7; margin: 0; padding: 2rem 1rem; color: #222; }
+  main { max-width: 600px; margin: 0 auto; background: #fff; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+  h1 { margin-top: 0; font-size: 1.5rem; }
+  ol { padding-left: 1.25rem; line-height: 1.6; }
+  li { margin-bottom: .75rem; }
+  code { background: #eee; padding: .1rem .35rem; border-radius: 4px; user-select: all; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: .75rem; font-size: 1rem; border: 1px solid #bbb; border-radius: 8px; margin-top: .25rem; }
+  button { margin-top: 1.25rem; padding: .75rem 1.5rem; font-size: 1rem; border: 0; border-radius: 8px; background: #1db954; color: #fff; cursor: pointer; }
+  button:disabled { background: #999; cursor: wait; }
+  #status { margin-top: 1.25rem; min-height: 1.5rem; }
+  .error { color: #b00020; }
+  .ok { color: #1b7a3a; font-weight: 600; }
+  .note { background: #fff8e1; border-radius: 8px; padding: .75rem 1rem; margin-top: 1.5rem; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="/">← Back</a></p>
+  <h1>🎵 Set up Spotify</h1>
+  <p id="already" class="ok" hidden>✓ Spotify is already set up. You can enter new keys below to replace them.</p>
+  <p>To get song recommendations we need a free Spotify "key". It takes about 3 minutes and only has to be done once.</p>
+  <ol>
+    <li>Open the <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Spotify Developer Dashboard</a> and log in with your normal Spotify account (a free account is fine). Accept the terms if asked.</li>
+    <li>Click <b>Create app</b>.</li>
+    <li>Fill in the form:
+      <ul>
+        <li><b>App name:</b> anything, e.g. <code>My Music Helper</code></li>
+        <li><b>App description:</b> anything, e.g. <code>Personal use</code></li>
+        <li><b>Redirect URI:</b> <code>http://127.0.0.1:5000/callback</code> then click <b>Add</b></li>
+        <li><b>Which API/SDKs:</b> tick <b>Web API</b></li>
+      </ul>
+      Tick the terms box and click <b>Save</b>.</li>
+    <li>On your new app's page, click <b>Settings</b>. You'll see your <b>Client ID</b>.</li>
+    <li>Next to it, click <b>View client secret</b> to reveal the <b>Client secret</b>.</li>
+    <li>Copy both and paste them below.</li>
+  </ol>
+
+  <form id="form">
+    <label for="cid">Client ID</label>
+    <input id="cid" type="text" autocomplete="off" spellcheck="false">
+    <label for="sec">Client secret</label>
+    <input id="sec" type="password" autocomplete="off" spellcheck="false">
+    <button id="save" type="submit">Check and save</button>
+  </form>
+  <div id="status" aria-live="polite"></div>
+  <div class="note">🔒 Your keys are stored only in a file on this computer (<code>.env</code>) and are never shown again or shared.</div>
+</main>
+<script>
+const form = document.getElementById('form');
+const btn = document.getElementById('save');
+const status = document.getElementById('status');
+
+fetch('/spotify/status').then(r => r.json()).then(d => {
+  document.getElementById('already').hidden = !d.configured;
+}).catch(() => {});
+
+function show(cls, msg) {
+  status.innerHTML = '<span></span>';
+  status.firstChild.className = cls;
+  status.firstChild.textContent = msg;
+}
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  btn.disabled = true;
+  show('', 'Checking with Spotify…');
+  try {
+    const res = await fetch('/spotify/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: document.getElementById('cid').value,
+        client_secret: document.getElementById('sec').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    document.getElementById('sec').value = '';
+    document.getElementById('already').hidden = false;
+    show('ok', '✓ Connected! Your Spotify keys are saved.');
+  } catch (err) {
+    show('error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

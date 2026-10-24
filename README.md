@@ -153,3 +153,17 @@ A behind-the-scenes look at real-world experiences, global insights, and hands-o
 
 ## 📆 License
 MIT License — free for personal and commercial use.
+
+---
+
+## 🖥️ Mac app (for non-technical users)
+
+Download the zip for your Mac from the [Releases page](../../releases) (**apple-silicon** for M1 and newer, **intel** for older Macs), unzip it and double-click **YT Audio**. Your browser opens with the page; nothing else needs installing.
+
+The app isn't signed with an Apple Developer account, so the first time macOS will say it can't be opened. **Right-click the app, choose Open, then Open again.** This is only needed once.
+
+Your Spotify keys are saved in `~/Library/Application Support/YT Audio`. Use the **Quit YT Audio** link at the bottom of the page to stop the app.
+
+**Always up to date:** a *Build Mac app* job rebuilds the app every Monday with the newest downloader and replaces the **Latest build** release, so the same download link keeps working when YouTube changes.
+
+**Building it:** push a tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) and the *Build Mac app* workflow publishes a release with both zips. To build by hand on a Mac: `pip install -r requirements.txt -r requirements-build.txt` then the `pyinstaller` command in `.github/workflows/build-mac.yml`.

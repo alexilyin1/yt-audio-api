@@ -11,7 +11,7 @@ import time
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from constants import EXPIRY_TIME_MINUTES, DOWNLOADS_DIRECTORY
+from constants import EXPIRY_TIME_MINUTES, ABS_DOWNLOADS_PATH
 
 # Stores active tokens with their expiration timestamps
 allowed_tokens = {}
@@ -97,7 +97,7 @@ def delete_expired_files(files: list) -> None:
     """
     for file in files:
         try:
-            full_path = Path(DOWNLOADS_DIRECTORY) / file
+            full_path = Path(ABS_DOWNLOADS_PATH) / file
             full_path.unlink(missing_ok=True)
         except Exception as e:
             print(f"Failed to delete file '{file}': {e}")

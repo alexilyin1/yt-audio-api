@@ -1,0 +1,78 @@
+name: Build Mac app
+
+# - every Monday: rebuild with the newest yt-dlp (YouTube changes break old copies) and replace the
+#   "latest" release, so the download link users have never changes
+# - pushing a tag like v1.0.0: publishes a separate release for that version
+# - by hand from the Actions tab: build only, nothing is published
+# Scheduled runs only happen for the workflow file on the default branch.
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest       # Apple Silicon (M1 and newer)
+            arch: apple-silicon
+          - runner: macos-15-intel     # Intel Macs
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (newest yt-dlp)
+        run: pip install -U -r requirements.txt -r requirements-build.txt
+      - name: Build the app
+        run: |
+          pyinstaller --noconfirm --windowed --name "YT Audio" \
+            --add-data "templates:templates" \
+            --collect-submodules yt_dlp --collect-all imageio_ffmpeg --collect-data certifi \
+            desktop_app.py
+      - name: Check the app starts
+        # Only startup is checked: GitHub's servers are often blocked by YouTube, so a real
+        # download here would fail for reasons that have nothing to do with the app.
+        run: |
+          "dist/YT Audio.app/Contents/MacOS/YT Audio" &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5000/app-info && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5000/app-info | grep -q '"desktop":true'
+          curl -s -X POST http://127.0.0.1:5000/quit || true
+      - name: Zip the app
+        run: ditto -c -k --keepParent "dist/YT Audio.app" "YT-Audio-mac-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YT-Audio-mac-${{ matrix.arch }}
+          path: YT-Audio-mac-${{ matrix.arch }}.zip
+
+  release:
+    if: github.event_name != 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish version release (tag push)
+        if: github.event_name == 'push'
+        run: gh release create "${{ github.ref_name }}" *.zip --repo "$REPO" --generate-notes
+      - name: Replace the "latest" release (weekly)
+        if: github.event_name == 'schedule'
+        run: |
+          gh release delete latest --repo "$REPO" --cleanup-tag --yes || true
+          gh release create latest *.zip --repo "$REPO" --target "${{ github.sha }}" --latest \
+            --title "Latest build ($(date -u +%F))" \
+            --notes "Rebuilt weekly with the newest downloader so YouTube changes don't break the app."

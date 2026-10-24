@@ -5,6 +5,7 @@ Clean, modular Flask-based backend for downloading and serving YouTube audio tra
 Utilizes yt-dlp and FFmpeg for conversion and token-based access management.
 """
 
+import os
 import secrets
 import threading
 from flask import Flask, request, jsonify, send_from_directory, render_template
@@ -13,6 +14,9 @@ from pathlib import Path
 import yt_dlp
 import imageio_ffmpeg
 import access_manager
+import spotify_config
+import similar_songs
+import song_import
 from constants import *
 
 # Initialize the Flask application
@@ -120,6 +124,55 @@ def handle_audio_request():
     return _generate_token_response(filename)
 
 
+@app.route("/spotify", methods=["GET"])
+def spotify_setup_page():
+    """Guided setup page for the Spotify API keys."""
+    return render_template("spotify.html")
+
+
+@app.route("/spotify/status", methods=["GET"])
+def spotify_status():
+    """Tells the GUI whether keys are already saved (never returns the keys)."""
+    return jsonify(configured=spotify_config.is_configured())
+
+
+@app.route("/spotify/save", methods=["POST"])
+def spotify_save():
+    """Validates a Client ID/secret with Spotify and, if they work, saves them to .env."""
+    data = request.get_json(silent=True) or {}
+    client_id = str(data.get("client_id", "")).strip()
+    client_secret = str(data.get("client_secret", "")).strip()
+    if not client_id or not client_secret:
+        return jsonify(error="Please fill in both the Client ID and the Client secret."), BAD_REQUEST
+    problem = spotify_config.check_credentials(client_id, client_secret)
+    if problem:
+        return jsonify(error=problem), BAD_REQUEST
+    spotify_config.save_credentials(client_id, client_secret)
+    return jsonify(ok=True)
+
+
+@app.route("/similar", methods=["GET"])
+def similar():
+    """Finds the song in a YouTube link on Spotify and returns 10 related songs."""
+    video_url = request.args.get("url")
+    if not video_url:
+        return jsonify(error="Missing 'url' parameter in request."), BAD_REQUEST
+    try:
+        return jsonify(similar_songs.find_similar(video_url))
+    except similar_songs.SimilarSongsError as e:
+        return jsonify(error=str(e)), INTERNAL_SERVER_ERROR
+
+
+@app.route("/import", methods=["POST"])
+def import_songs():
+    """Parses pasted/uploaded song text and returns each song with a YouTube link (when found)."""
+    data = request.get_json(silent=True) or {}
+    queries = song_import.parse_songs(str(data.get("text", "")))
+    if not queries:
+        return jsonify(error="I couldn't find any song names in that."), BAD_REQUEST
+    return jsonify(songs=song_import.resolve_songs(queries))
+
+
 @app.route("/download", methods=["GET"])
 def download_audio():
     """
@@ -165,16 +218,29 @@ def _generate_token_response(filename: str):
     return jsonify(token=token)
 
 
+@app.route("/app-info", methods=["GET"])
+def app_info():
+    """Lets the page know whether it is running as the desktop app (which has a Quit link)."""
+    return jsonify(desktop=IS_DESKTOP_APP)
+
+
+@app.route("/quit", methods=["POST"])
+def quit_app():
+    """Desktop app only: stops the program, since closing the browser tab doesn't."""
+    if not IS_DESKTOP_APP:
+        return jsonify(error="Not available."), NOT_FOUND
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+    return jsonify(ok=True)
+
+
+def start_token_cleaner():
+    """Starts the background thread that deletes expired tokens and their files."""
+    threading.Thread(target=access_manager.manage_tokens, daemon=True).start()
+
+
 def main():
-    """
-    Starts the background thread for automatic token cleanup
-    and launches the Flask development server.
-    """
-    token_cleaner_thread = threading.Thread(
-        target=access_manager.manage_tokens,
-        daemon=True
-    )
-    token_cleaner_thread.start()
+    """Developer mode: token cleanup plus the Flask development server with auto-reload."""
+    start_token_cleaner()
     app.run(debug=True)
 
 
