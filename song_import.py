@@ -15,7 +15,7 @@ import similar_songs
 import spotify_config
 import youtube_match
 
-MAX_SONGS = 50
+MAX_SONGS = 100  # most songs used from one pasted list or file
 _DELIMITERS = ["\t", ";", "|", ","]  # tried in this order
 _TITLE_HEADERS = ("track name", "track", "title", "song name", "song", "name")
 _ARTIST_HEADERS = ("artist name(s)", "artist names", "artist name", "artists", "artist")
@@ -41,7 +41,7 @@ def _table_delimiter(lines: list[str]) -> str | None:
 
 
 def parse_songs(text: str) -> list[str]:
-    """Returns search queries, one per song, from free-form text or CSV contents."""
+    """Returns search queries, one per song, from free-form text or CSV contents (all of them; the caller applies MAX_SONGS)."""
     text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     lines = [l for l in text.split("\n") if l.strip()]
     queries: list[str] = []
@@ -77,7 +77,7 @@ def parse_songs(text: str) -> list[str]:
         if q and q.lower() not in seen:
             seen.add(q.lower())
             songs.append(q)
-    return songs[:MAX_SONGS]
+    return songs
 
 
 def _looks_related(query: str, track: dict) -> bool:

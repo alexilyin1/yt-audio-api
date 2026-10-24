@@ -4,20 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouTube to MP3</title>
+<link rel="stylesheet" href="/static/common.css">
 <style>
   body { font-family: system-ui, sans-serif; background: #f4f4f7; margin: 0; padding: 2rem 1rem; color: #222; }
   main { max-width: 560px; margin: 0 auto; background: #fff; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
   h1 { margin-top: 0; font-size: 1.5rem; }
   input[type=text] { width: 100%; box-sizing: border-box; padding: .75rem; font-size: 1rem; border: 1px solid #bbb; border-radius: 8px; }
-  button { margin-top: 1rem; padding: .75rem 1.5rem; font-size: 1rem; border: 0; border-radius: 8px; background: #d32f2f; color: #fff; cursor: pointer; }
-  button:disabled { background: #999; cursor: wait; }
-  button.small { margin: 0 0 0 .25rem; padding: .25rem .7rem; font-size: .85rem; background: #d32f2f; }
   #simlist li { margin-bottom: .6rem; }
   #sim:disabled { background: #ccc !important; cursor: not-allowed; }
-  progress { width: 100%; height: 1.2rem; }
   #status { margin-top: 1.25rem; min-height: 1.5rem; }
-  .error { color: #b00020; }
-  a.dl { display: inline-block; padding: .6rem 1.2rem; background: #2e7d32; color: #fff; border-radius: 8px; text-decoration: none; }
 </style>
 </head>
 <body>
@@ -32,50 +27,26 @@
   <div id="status" aria-live="polite"></div>
   <hr style="margin:2rem 0;border:0;border-top:1px solid #ddd">
   <h2 style="font-size:1.15rem">Import a list of songs</h2>
-  <p style="font-size:.9rem;color:#555">Paste song names (one per line, or separated by commas, tabs, semicolons) or choose a .txt / .csv file.</p>
+  <p style="font-size:.9rem;color:#555">Paste song names (one per line, or separated by commas, tabs, semicolons) or choose a .txt / .csv file (up to 100 songs).</p>
   <textarea id="imptext" rows="5" style="width:100%;box-sizing:border-box;padding:.75rem;font-size:1rem;border:1px solid #bbb;border-radius:8px" placeholder="Bohemian Rhapsody&#10;Africa&#10;Take on Me"></textarea>
   <input id="impfile" type="file" accept=".txt,.csv,text/plain,text/csv" style="margin-top:.5rem">
   <br><button id="imp" style="background:#1565c0">Find these songs</button>
   <div id="imphint" style="font-size:.85rem;color:#666;margin-top:.5rem" aria-live="polite"></div>
-  <div id="impzip" style="margin-top:.75rem"></div>
+  <div id="impactions" style="margin-top:.75rem"></div>
   <ol id="implist"></ol>
   <p style="margin-top:2rem"><a href="/spotify">Set up Spotify song recommendations →</a></p>
   <p id="quitrow" hidden style="font-size:.85rem"><a href="#" id="quit">Quit YT Audio</a></p>
 </main>
+<script src="/static/common.js"></script>
 <script>
 const urlBox = document.getElementById('url');
 const btn = document.getElementById('go');
 const status = document.getElementById('status');
 
-const LABELS = { downloading: 'Downloading', converting: 'Converting to MP3…' };
 
 function showError(msg) {
   status.innerHTML = '<span class="error"></span>';
   status.firstChild.textContent = msg;
-}
-
-// Converts one YouTube link; calls onUpdate(label, percent|null) along the way, resolves to the download token
-async function runConversion(url, onUpdate) {
-  onUpdate('Starting…', 0);
-  const res = await fetch('/start?url=' + encodeURIComponent(url));
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-  while (true) {
-    await new Promise(r => setTimeout(r, 500));
-    const p = await (await fetch('/progress?job=' + encodeURIComponent(data.job))).json();
-    if (p.state === 'error') throw new Error(p.error || 'Something went wrong.');
-    if (p.state === 'done') return p.token;
-    if (p.state === 'downloading') onUpdate('Downloading… ' + p.percent + '%', p.percent);
-    else onUpdate(LABELS[p.state], null);
-  }
-}
-
-function downloadLink(token, kind = 'MP3') {
-  const a = document.createElement('a');
-  a.className = 'dl';
-  a.href = '/download?token=' + encodeURIComponent(token);
-  a.textContent = '⬇ Download ' + kind;
-  return a;
 }
 
 async function convert() {
@@ -98,105 +69,13 @@ async function convert() {
   }
 }
 
-// One "Download MP3" button for a similar song; turns into a progress text, then a download link
-function songDownloader(youtubeUrl) {
-  const holder = document.createElement('span');
-  const button = document.createElement('button');
-  button.className = 'small';
-  button.textContent = '⬇ Download MP3';
-  button.addEventListener('click', async () => {
-    button.disabled = true;
-    try {
-      const token = await runConversion(youtubeUrl, text => { button.textContent = text; });
-      holder.replaceChildren(downloadLink(token));
-    } catch (e) {
-      button.disabled = false;
-      button.textContent = '⬇ Try again';
-      holder.title = e.message;
-    }
-  });
-  holder.appendChild(button);
-  return holder;
-}
-// "Download all as ZIP" for a list of songs: converts them on the server and offers one zip file
-function zipButton(songs) {
-  const holder = document.createElement('div');
-  const button = document.createElement('button');
-  button.style.background = '#2e7d32';
-  button.textContent = '⬇ Download all ' + songs.length + ' as ZIP';
-  const note = document.createElement('div');
-  note.style.cssText = 'font-size:.85rem;color:#666;margin-top:.5rem';
-  const bar = document.createElement('progress');
-  bar.max = 100;
-  bar.hidden = true;
-  button.addEventListener('click', async () => {
-    button.disabled = true;
-    bar.hidden = false;
-    bar.value = 0;
-    note.textContent = 'Starting…';
-    try {
-      const res = await fetch('/zip/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ songs: songs.map(s => ({ name: s.name, url: s.url })) }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-      while (true) {
-        await new Promise(r => setTimeout(r, 1000));
-        const p = await (await fetch('/progress?job=' + encodeURIComponent(data.job))).json();
-        if (p.state === 'error') throw new Error(p.error || 'Something went wrong.');
-        if (p.state === 'done') {
-          holder.replaceChildren(downloadLink(p.token, 'ZIP'));
-          if (p.failed.length) {
-            const skipped = document.createElement('div');
-            skipped.style.cssText = 'font-size:.85rem;color:#b00020;margin-top:.5rem';
-            skipped.textContent = 'Could not download: ' + p.failed.join(', ');
-            holder.appendChild(skipped);
-          }
-          return;
-        }
-        bar.value = p.total ? p.done / p.total * 100 : 0;
-        note.textContent = p.state === 'zipping' ? 'Making the zip file…' : 'Converted ' + p.done + ' of ' + p.total + '…';
-      }
-    } catch (e) {
-      button.disabled = false;
-      bar.hidden = true;
-      note.textContent = e.message;
-    }
-  });
-  holder.append(button, document.createElement('br'), bar, note);
-  return holder;
-}
-
-// One list item: song name, YouTube link and Download MP3 button (or a note when no clean link was found)
-function songRow(song) {
-  const li = document.createElement('li');
-  li.textContent = song.name + ' ';
-  if (song.url) {
-    const a = document.createElement('a');
-    a.href = song.url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.textContent = '▶ YouTube';
-    li.appendChild(a);
-    li.appendChild(document.createTextNode(' '));
-    li.appendChild(songDownloader(song.url));
-  } else {
-    const none = document.createElement('span');
-    none.style.color = '#888';
-    none.textContent = '(no clean audio found)';
-    li.appendChild(none);
-  }
-  return li;
-}
-
 const sim = document.getElementById('sim');
 const simHint = document.getElementById('simhint');
 const simList = document.getElementById('simlist');
 
 // Similar songs needs the Spotify keys; stay greyed out until they are saved
 fetch('/spotify/status').then(r => r.json()).then(d => {
+  spotifyReady = d.configured;
   sim.disabled = !d.configured;
   simHint.innerHTML = d.configured ? '' : 'To find similar songs, <a href="/spotify">set up Spotify first</a>.';
 }).catch(() => {});
@@ -220,12 +99,35 @@ sim.addEventListener('click', async () => {
   }
 });
 
+// Sends the imported songs to the page that finds similar songs for each of them
+function similarForListButton(queries) {
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '.75rem';
+  const button = document.createElement('button');
+  button.style.cssText = 'background:#1db954;margin-top:0';
+  button.textContent = '🎵 Find similar songs for these ' + queries.length;
+  button.disabled = !spotifyReady;
+  button.addEventListener('click', () => {
+    try { sessionStorage.setItem('bulkQueries', JSON.stringify(queries)); } catch (e) {}
+    location.href = '/bulk-similar';
+  });
+  wrap.appendChild(button);
+  if (!spotifyReady) {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:.85rem;color:#666;margin-top:.5rem';
+    hint.innerHTML = 'To find similar songs, <a href="/spotify">set up Spotify first</a>.';
+    wrap.appendChild(hint);
+  }
+  return wrap;
+}
+
 // Import: a chosen file fills the text box, then "Find these songs" looks up each one
 const imp = document.getElementById('imp');
 const impText = document.getElementById('imptext');
 const impHint = document.getElementById('imphint');
 const impList = document.getElementById('implist');
-const impZip = document.getElementById('impzip');
+const impActions = document.getElementById('impactions');
+let spotifyReady = false;  // set from /spotify/status below
 
 document.getElementById('impfile').addEventListener('change', e => {
   const file = e.target.files[0];
@@ -237,7 +139,7 @@ document.getElementById('impfile').addEventListener('change', e => {
 
 imp.addEventListener('click', async () => {
   impList.innerHTML = '';
-  impZip.replaceChildren();
+  impActions.replaceChildren();
   if (!impText.value.trim()) { impHint.textContent = 'Paste some song names or choose a file first.'; return; }
   imp.disabled = true;
   impHint.textContent = 'Looking up songs… this can take a little while for long lists.';
@@ -249,10 +151,13 @@ imp.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-    impHint.textContent = 'Found ' + data.songs.length + ' song' + (data.songs.length === 1 ? '' : 's') + ':';
+    let msg = 'Found ' + data.songs.length + ' song' + (data.songs.length === 1 ? '' : 's') + ':';
+    if (data.found > data.limit) msg = 'Your list has ' + data.found + ' songs; using the first ' + data.limit + '. ' + msg;
+    impHint.textContent = msg;
     data.songs.forEach(song => impList.appendChild(songRow(song)));
     const downloadable = data.songs.filter(s => s.url);
-    if (downloadable.length > 1) impZip.appendChild(zipButton(downloadable));
+    if (downloadable.length > 1) impActions.appendChild(zipButton(downloadable));
+    impActions.appendChild(similarForListButton(data.songs.map(s => s.query)));
   } catch (e) {
     impHint.textContent = e.message;
   } finally {

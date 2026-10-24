@@ -11,6 +11,7 @@ Songs that share playlists with the seed song are ranked first.
 import base64
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -53,13 +54,17 @@ def _get_token() -> str:
 def _api(token: str, path: str, **params) -> dict:
     url = API + path + ("?" + urllib.parse.urlencode(params) if params else "")
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as e:
-        raise SimilarSongsError(f"Spotify returned an error ({e.code}). Please try again.")
-    except urllib.error.URLError:
-        raise SimilarSongsError("Couldn't reach Spotify. Check your internet connection.")
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 3:  # rate limited (big lists): wait as Spotify asks, then retry
+                time.sleep(min(int(e.headers.get("Retry-After", 2)), 10) + 1)
+                continue
+            raise SimilarSongsError(f"Spotify returned an error ({e.code}). Please try again.")
+        except urllib.error.URLError:
+            raise SimilarSongsError("Couldn't reach Spotify. Check your internet connection.")
 
 
 def video_song_query(video_url: str) -> tuple[str, str]:
@@ -79,6 +84,7 @@ def video_song_query(video_url: str) -> tuple[str, str]:
 
 def _base_name(name: str) -> str:
     """'Song - 2022 Remaster' / 'Song (Live)' -> 'song', so versions of one song count as the same."""
+    name = name.replace("\u2019", "'").replace("\u2018", "'")  # Spotify mixes curly and straight apostrophes
     return re.split(r"\s+-\s+|\s*[\(\[]", name, maxsplit=1)[0].strip().lower()
 
 
@@ -116,20 +122,17 @@ def _playlist_neighbours(token: str, seed: dict, seed_base: str) -> list:
     return [by_id[i] for i in ranked]
 
 
-def find_similar(video_url: str, limit: int = 10) -> dict:
-    query, artist_hint = video_song_query(video_url)
-    token = _get_token()
-
-    # Match the video to a Spotify track: try "title + channel", then the title alone
-    seed = None
-    for q in (f"{query} {artist_hint}".strip(), query):
+def seed_from_queries(token: str, queries: list) -> dict:
+    """The first Spotify track found for any of the search texts, tried in order."""
+    for q in queries:
         items = _api(token, "search", q=q, type="track", limit=1)["tracks"]["items"]
         if items:
-            seed = items[0]
-            break
-    if not seed:
-        raise SimilarSongsError(f"Couldn't find \"{query}\" on Spotify.")
+            return items[0]
+    raise SimilarSongsError(f"Couldn't find \"{queries[-1]}\" on Spotify.")
 
+
+def similar_for_seed(token: str, seed: dict, limit: int = 10) -> dict:
+    """Related songs (with YouTube links) for a Spotify track."""
     seed_base = _base_name(seed["name"])
     seed_artist = seed["artists"][0]
     results, seen = [], {seed_base}
@@ -170,3 +173,11 @@ def find_similar(video_url: str, limit: int = 10) -> dict:
         "song": _label(seed),
         "similar": [{"name": _label(t), "url": link} for t, link in zip(results, links)],
     }
+
+
+def find_similar(video_url: str, limit: int = 10) -> dict:
+    query, artist_hint = video_song_query(video_url)
+    token = _get_token()
+    # Match the video to a Spotify track: try "title + channel", then the title alone
+    seed = seed_from_queries(token, [f"{query} {artist_hint}".strip(), query])
+    return similar_for_seed(token, seed, limit)
